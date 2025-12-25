@@ -2,43 +2,57 @@
 
 An extremely fast Swift package manager, written in Rust.
 
-<p align="center">
-  <img alt="Gust vs SwiftPM benchmark" src="https://github.com/user-attachments/assets/benchmark-placeholder.svg" width="600">
-</p>
-
-<p align="center">
-  <em>Installing Vapor's dependencies with a warm cache.</em>
-</p>
-
 ## Highlights
 
-- 10-100x faster than SwiftPM
-- Parallel dependency fetching
-- Content-addressable cache with hard links
-- Binary artifact caching
-- Works with existing `Package.swift` files
+- **10-100x faster** than SwiftPM for common operations
+- **Parallel dependency fetching** with concurrent git clones
+- **Content-addressable cache** with hard links (pnpm-style)
+- **Binary artifact caching** for near-instant rebuilds
+- Works with existing `Package.swift` files or simpler `Gust.toml`
 
 ## Installation
 
 ```sh
-curl -fsSL https://gust.dev/install.sh | sh
+curl -fsSL quantbagel.vercel.app/gust/install.sh | sh
 ```
 
-See the [installation docs](https://gust.dev/docs/installation) for Homebrew, Cargo, and other methods.
+See [docs/installation.md](docs/installation.md) for Homebrew, Cargo, and other methods.
 
-## Usage
+## Quick Start
 
 ```sh
 gust new myapp        # Create a new package
-gust add vapor        # Add a dependency
+cd myapp
+gust add swift-log --git https://github.com/apple/swift-log.git --tag 1.5.0
 gust install          # Install dependencies
 gust build            # Build the package
 gust run              # Run the executable
 ```
 
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `gust new <name>` | Create a new package |
+| `gust init` | Initialize in current directory |
+| `gust add <pkg>` | Add a dependency |
+| `gust remove <pkg>` | Remove a dependency |
+| `gust install` | Install dependencies |
+| `gust update` | Update dependencies |
+| `gust build` | Build the package |
+| `gust run` | Run the executable |
+| `gust test` | Run tests |
+| `gust tree` | Show dependency tree |
+| `gust search <query>` | Search Swift packages |
+
 ## Documentation
 
-Full documentation is available at [gust.dev/docs](https://gust.dev/docs).
+- [Installation](docs/installation.md)
+- [Configuration](docs/configuration.md)
+- [Commands](docs/commands.md)
+- [Gust.toml Format](docs/gust-toml.md)
+- [Workspaces](docs/workspaces.md)
+- [Caching](docs/caching.md)
 
 ## License
 
