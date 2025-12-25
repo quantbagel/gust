@@ -642,19 +642,207 @@ pub async fn install(frozen: bool) -> Result<()> {
 }
 
 /// Update dependencies.
-pub async fn update(package: Option<&str>, _breaking: bool) -> Result<()> {
-    if let Some(pkg) = package {
-        println!(
-            "{} Updating {}",
-            style("→").blue().bold(),
-            style(pkg).cyan()
-        );
-    } else {
-        println!("{} Updating all dependencies", style("→").blue().bold());
+pub async fn update(package: Option<&str>, breaking: bool) -> Result<()> {
+    let cwd = env::current_dir().into_diagnostic()?;
+    let manifest_path = cwd.join("Gust.toml");
+    let lockfile_path = cwd.join("Gust.lock");
+
+    if !manifest_path.exists() {
+        return Err(miette::miette!(
+            "No Gust.toml found. Run 'gust init' first."
+        ));
     }
 
-    // TODO: Implement actual update
-    println!("{} Dependencies updated", style("✓").green().bold());
+    if !lockfile_path.exists() {
+        return Err(miette::miette!(
+            "No Gust.lock found. Run 'gust install' first."
+        ));
+    }
+
+    let lockfile = gust_lockfile::Lockfile::load(&lockfile_path).into_diagnostic()?;
+    let mut manifest_content = fs::read_to_string(&manifest_path).into_diagnostic()?;
+
+    // Filter packages to update
+    let packages_to_check: Vec<_> = lockfile
+        .packages
+        .iter()
+        .filter(|pkg| {
+            if let Some(name) = package {
+                pkg.name == name
+            } else {
+                true
+            }
+        })
+        .collect();
+
+    if packages_to_check.is_empty() {
+        if let Some(name) = package {
+            return Err(miette::miette!("Package '{}' not found in lockfile", name));
+        }
+        println!("{} No dependencies to update", style("✓").green().bold());
+        return Ok(());
+    }
+
+    println!(
+        "{} Checking {} package(s) for updates...",
+        style("→").blue().bold(),
+        packages_to_check.len()
+    );
+
+    // Check each git dependency for newer tags in parallel
+    let mut tasks = Vec::new();
+
+    for pkg in &packages_to_check {
+        if let Some(ref git_url) = pkg.git {
+            let name = pkg.name.clone();
+            let current_version = pkg.version.to_string();
+            let url = git_url.clone();
+
+            tasks.push(tokio::spawn(async move {
+                match gust_fetch::list_remote_tags(&url).await {
+                    Ok(tags) => {
+                        if let Some(latest) = tags.iter().find(|t| t.version.is_some()) {
+                            let latest_version = latest.version.as_ref().unwrap();
+                            let current = semver::Version::parse(&current_version).ok();
+
+                            if let Some(ref curr) = current {
+                                if latest_version > curr {
+                                    return Some((name, current_version, latest.name.clone(), latest_version.clone()));
+                                }
+                            }
+                        }
+                        None
+                    }
+                    Err(_) => None,
+                }
+            }));
+        }
+    }
+
+    // Collect updates
+    let mut updates: Vec<(String, String, String, semver::Version)> = Vec::new();
+    for task in tasks {
+        if let Ok(Some(info)) = task.await {
+            updates.push(info);
+        }
+    }
+
+    if updates.is_empty() {
+        println!(
+            "{} All dependencies are up to date",
+            style("✓").green().bold()
+        );
+        return Ok(());
+    }
+
+    // Filter by breaking changes if requested
+    let updates: Vec<_> = if breaking {
+        updates
+    } else {
+        updates
+            .into_iter()
+            .filter(|(_, current, _, latest)| {
+                if let Ok(curr) = semver::Version::parse(current) {
+                    // Only non-breaking updates (same major version, or 0.x.y -> 0.x.z)
+                    if curr.major == 0 && latest.major == 0 {
+                        curr.minor == latest.minor
+                    } else {
+                        curr.major == latest.major
+                    }
+                } else {
+                    true
+                }
+            })
+            .collect()
+    };
+
+    if updates.is_empty() {
+        println!(
+            "{} No non-breaking updates available",
+            style("✓").green().bold()
+        );
+        println!(
+            "  Run {} to include breaking changes",
+            style("gust update --breaking").cyan()
+        );
+        return Ok(());
+    }
+
+    println!();
+    println!(
+        "{:<30} {:<15} {:<15}",
+        style("Package").bold(),
+        style("Current").bold(),
+        style("New").bold()
+    );
+    println!("{}", style("─".repeat(60)).dim());
+
+    for (name, current, new_tag, _) in &updates {
+        println!(
+            "{:<30} {:<15} {}",
+            style(name).cyan(),
+            style(current).dim(),
+            style(new_tag).green()
+        );
+
+        // Update the manifest to use the new tag
+        // Look for patterns like: tag = "old_version" for this package
+        let patterns = [
+            format!("{} = {{ git =", name),
+            format!("{} = {{git =", name),
+        ];
+
+        for pattern in &patterns {
+            if let Some(start_idx) = manifest_content.find(pattern) {
+                // Find the line containing this dependency
+                let line_start = manifest_content[..start_idx].rfind('\n').map(|i| i + 1).unwrap_or(0);
+                let line_end = manifest_content[start_idx..].find('\n').map(|i| start_idx + i).unwrap_or(manifest_content.len());
+                let line = &manifest_content[line_start..line_end];
+
+                // Replace tag = "..." with new tag
+                if let Some(tag_start) = line.find("tag = \"") {
+                    let tag_value_start = tag_start + 7;
+                    if let Some(tag_end) = line[tag_value_start..].find('"') {
+                        let old_line = line.to_string();
+                        let new_line = format!(
+                            "{}{}{}",
+                            &line[..tag_value_start],
+                            new_tag,
+                            &line[tag_value_start + tag_end..]
+                        );
+                        manifest_content = manifest_content.replace(&old_line, &new_line);
+                    }
+                }
+            }
+        }
+    }
+
+    // Write updated manifest
+    fs::write(&manifest_path, &manifest_content).into_diagnostic()?;
+
+    // Clear the cache for updated packages so they get re-fetched
+    let cache = GlobalCache::open().into_diagnostic()?;
+    for (name, _, _, _) in &updates {
+        let cache_path = cache.git_dir().join(name);
+        if cache_path.exists() {
+            let _ = fs::remove_dir_all(&cache_path);
+        }
+    }
+
+    // Remove lockfile to force re-resolution
+    let _ = fs::remove_file(&lockfile_path);
+
+    println!();
+    println!(
+        "{} Updated {} package(s)",
+        style("✓").green().bold(),
+        updates.len()
+    );
+    println!(
+        "\n{} Run {} to install the updates",
+        style("→").dim(),
+        style("gust install").cyan()
+    );
 
     Ok(())
 }
@@ -678,12 +866,128 @@ pub async fn tree(_depth: Option<usize>, _duplicates: bool) -> Result<()> {
     Ok(())
 }
 
+/// Information about an outdated dependency.
+#[derive(Debug)]
+pub struct OutdatedInfo {
+    pub name: String,
+    pub current: String,
+    pub latest: String,
+    pub latest_tag: String,
+}
+
 /// Show outdated dependencies.
 pub async fn outdated() -> Result<()> {
-    println!("{} Checking for outdated dependencies...", style("→").blue().bold());
+    let cwd = env::current_dir().into_diagnostic()?;
+    let lockfile_path = cwd.join("Gust.lock");
 
-    // TODO: Implement version checking
-    println!("{} All dependencies are up to date", style("✓").green().bold());
+    if !lockfile_path.exists() {
+        return Err(miette::miette!(
+            "No Gust.lock found. Run 'gust install' first."
+        ));
+    }
+
+    println!(
+        "{} Checking for outdated dependencies...",
+        style("→").blue().bold()
+    );
+
+    let lockfile = gust_lockfile::Lockfile::load(&lockfile_path).into_diagnostic()?;
+
+    if lockfile.packages.is_empty() {
+        println!("{} No dependencies to check", style("✓").green().bold());
+        return Ok(());
+    }
+
+    // Check each git dependency for newer tags in parallel
+    let mut tasks = Vec::new();
+
+    for pkg in &lockfile.packages {
+        if let Some(ref git_url) = pkg.git {
+            let name = pkg.name.clone();
+            let current_version = pkg.version.to_string();
+            let url = git_url.clone();
+
+            tasks.push(tokio::spawn(async move {
+                match gust_fetch::list_remote_tags(&url).await {
+                    Ok(tags) => {
+                        // Find the latest semver tag
+                        if let Some(latest) = tags.iter().find(|t| t.version.is_some()) {
+                            let latest_version = latest.version.as_ref().unwrap();
+                            let current = semver::Version::parse(&current_version).ok();
+
+                            if let Some(ref curr) = current {
+                                if latest_version > curr {
+                                    return Some(OutdatedInfo {
+                                        name,
+                                        current: current_version,
+                                        latest: latest_version.to_string(),
+                                        latest_tag: latest.name.clone(),
+                                    });
+                                }
+                            } else {
+                                // Current version isn't semver, show latest anyway
+                                return Some(OutdatedInfo {
+                                    name,
+                                    current: current_version,
+                                    latest: latest_version.to_string(),
+                                    latest_tag: latest.name.clone(),
+                                });
+                            }
+                        }
+                        None
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to check {} for updates: {}", name, e);
+                        None
+                    }
+                }
+            }));
+        }
+    }
+
+    // Collect results
+    let mut outdated_deps = Vec::new();
+    for task in tasks {
+        if let Ok(Some(info)) = task.await {
+            outdated_deps.push(info);
+        }
+    }
+
+    if outdated_deps.is_empty() {
+        println!(
+            "{} All dependencies are up to date",
+            style("✓").green().bold()
+        );
+    } else {
+        println!();
+        println!(
+            "{:<30} {:<15} {:<15}",
+            style("Package").bold(),
+            style("Current").bold(),
+            style("Latest").bold()
+        );
+        println!("{}", style("─".repeat(60)).dim());
+
+        for dep in &outdated_deps {
+            println!(
+                "{:<30} {:<15} {}",
+                style(&dep.name).cyan(),
+                style(&dep.current).dim(),
+                style(&dep.latest).green()
+            );
+        }
+
+        println!();
+        println!(
+            "{} {} package(s) can be updated",
+            style("→").yellow(),
+            outdated_deps.len()
+        );
+        println!(
+            "  Run {} to update all",
+            style("gust update").cyan()
+        );
+    }
 
     Ok(())
 }

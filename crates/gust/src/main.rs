@@ -48,9 +48,12 @@ enum Commands {
     New {
         /// Package name
         name: String,
-        /// Package type
+        /// Package type: executable, library
         #[arg(long, default_value = "library")]
         r#type: String,
+        /// Don't create git repository
+        #[arg(long)]
+        no_git: bool,
     },
 
     /// Initialize a package in the current directory
@@ -58,15 +61,25 @@ enum Commands {
         /// Package name (defaults to directory name)
         #[arg(long)]
         name: Option<String>,
+        /// Package type: executable, library
+        #[arg(long, default_value = "library")]
+        r#type: String,
     },
 
     /// Add a dependency
     Add {
         /// Package name (optionally with version: package@1.0)
+        /// Examples: swift-log, apple/swift-log, vapor/vapor@4.0
         package: String,
         /// Git repository URL
         #[arg(long)]
         git: Option<String>,
+        /// Git branch
+        #[arg(long)]
+        branch: Option<String>,
+        /// Git tag
+        #[arg(long)]
+        tag: Option<String>,
         /// Local path
         #[arg(long)]
         path: Option<PathBuf>,
@@ -162,6 +175,31 @@ enum Commands {
         /// Package name
         package: String,
     },
+
+    /// Search for packages
+    Search {
+        /// Search query
+        query: String,
+        /// Maximum results to show
+        #[arg(long, default_value = "10")]
+        limit: usize,
+    },
+
+    /// Manage Swift toolchains
+    Swift {
+        #[command(subcommand)]
+        action: SwiftAction,
+    },
+
+    /// Generate Xcode project
+    Xcode {
+        /// Open in Xcode after generating
+        #[arg(long)]
+        open: bool,
+    },
+
+    /// Check environment and diagnose issues
+    Doctor,
 }
 
 #[derive(Subcommand)]
@@ -181,6 +219,27 @@ enum CacheAction {
     },
     /// Print cache directory path
     Path,
+}
+
+#[derive(Subcommand)]
+enum SwiftAction {
+    /// List installed Swift versions
+    List,
+    /// Show current Swift version
+    Current,
+    /// Install a Swift version
+    Install {
+        /// Version to install (e.g., 5.9, 5.10, latest)
+        version: String,
+    },
+    /// Use a specific Swift version
+    Use {
+        /// Version to use
+        version: String,
+        /// Set as global default
+        #[arg(long)]
+        global: bool,
+    },
 }
 
 #[tokio::main]
@@ -206,11 +265,11 @@ async fn main() -> Result<()> {
     }
 
     match cli.command {
-        Commands::New { name, r#type } => {
-            commands::new_package(&name, &r#type).await?;
+        Commands::New { name, r#type, no_git } => {
+            commands::new_package(&name, &r#type, no_git).await?;
         }
-        Commands::Init { name } => {
-            commands::init(name.as_deref()).await?;
+        Commands::Init { name, r#type } => {
+            commands::init(name.as_deref(), &r#type).await?;
         }
         Commands::Build { release, target, no_cache } => {
             commands::build(release, target.as_deref(), cli.global.jobs, no_cache).await?;
@@ -224,8 +283,8 @@ async fn main() -> Result<()> {
         Commands::Clean { deps } => {
             commands::clean(deps).await?;
         }
-        Commands::Add { package, git, path, dev } => {
-            commands::add(&package, git.as_deref(), path.as_deref(), dev).await?;
+        Commands::Add { package, git, branch, tag, path, dev } => {
+            commands::add(&package, git.as_deref(), branch.as_deref(), tag.as_deref(), path.as_deref(), dev).await?;
         }
         Commands::Remove { package } => {
             commands::remove(&package).await?;
@@ -253,6 +312,21 @@ async fn main() -> Result<()> {
         }
         Commands::Info { package } => {
             commands::info(&package).await?;
+        }
+        Commands::Search { query, limit } => {
+            commands::search(&query, limit).await?;
+        }
+        Commands::Swift { action } => match action {
+            SwiftAction::List => commands::swift_list().await?,
+            SwiftAction::Current => commands::swift_current().await?,
+            SwiftAction::Install { version } => commands::swift_install(&version).await?,
+            SwiftAction::Use { version, global } => commands::swift_use(&version, global).await?,
+        },
+        Commands::Xcode { open } => {
+            commands::xcode_generate(open).await?;
+        }
+        Commands::Doctor => {
+            commands::doctor().await?;
         }
     }
 

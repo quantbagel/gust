@@ -1,6 +1,7 @@
 //! Parallel package fetching for Gust.
 
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::Arc;
 use gust_types::Dependency;
 use thiserror::Error;
@@ -143,7 +144,7 @@ impl Fetcher {
     }
 
     /// Static version of fetch_git for use in spawned tasks.
-    /// Uses native gix library instead of shelling out to git for better performance.
+    /// Uses git command for reliability with annotated tags.
     async fn fetch_git_static(dep: &Dependency, dest: &PathBuf) -> Result<FetchResult, FetchError> {
         let url = dep.git.as_ref().ok_or_else(|| FetchError::FetchFailed {
             package: dep.name.clone(),
@@ -159,9 +160,9 @@ impl Fetcher {
         let tag = dep.tag.clone();
         let name = dep.name.clone();
 
-        // Run gix clone in a blocking task (gix is synchronous)
+        // Use git command for better compatibility with annotated tags
         let (revision, checksum) = tokio::task::spawn_blocking(move || {
-            clone_with_gix(&url, &dest_clone, branch, tag)
+            clone_with_git(&url, &dest_clone, branch, tag)
         })
         .await
         .map_err(|e| FetchError::GitError(format!("Task join error: {}", e)))??;
@@ -337,8 +338,61 @@ fn compute_dir_hash(path: &PathBuf) -> Result<String, FetchError> {
     Ok(blake3::hash(combined.as_bytes()).to_hex().to_string())
 }
 
+/// Clone a git repository using the git command.
+/// More reliable for annotated tags and complex scenarios.
+/// Returns (revision, checksum) on success.
+fn clone_with_git(
+    url: &str,
+    dest: &std::path::Path,
+    branch: Option<String>,
+    tag: Option<String>,
+) -> Result<(String, String), FetchError> {
+    let mut args = vec!["clone", "--depth", "1"];
+
+    // Add branch or tag
+    let ref_arg: String;
+    if let Some(ref t) = tag {
+        ref_arg = t.clone();
+        args.push("--branch");
+        args.push(&ref_arg);
+    } else if let Some(ref b) = branch {
+        ref_arg = b.clone();
+        args.push("--branch");
+        args.push(&ref_arg);
+    }
+
+    args.push(url);
+    let dest_str = dest.to_string_lossy();
+    args.push(&dest_str);
+
+    let output = Command::new("git")
+        .args(&args)
+        .output()
+        .map_err(|e| FetchError::GitError(format!("Failed to run git: {}", e)))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(FetchError::GitError(format!("git clone failed: {}", stderr)));
+    }
+
+    // Get the HEAD revision
+    let rev_output = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(dest)
+        .output()
+        .map_err(|e| FetchError::GitError(format!("Failed to get revision: {}", e)))?;
+
+    let revision = String::from_utf8_lossy(&rev_output.stdout).trim().to_string();
+
+    // Compute checksum
+    let checksum = compute_dir_hash(&dest.to_path_buf())?;
+
+    Ok((revision, checksum))
+}
+
 /// Clone a git repository using native gix library.
 /// Returns (revision, checksum) on success.
+#[allow(dead_code)]
 fn clone_with_gix(
     url: &str,
     dest: &std::path::Path,
@@ -347,9 +401,6 @@ fn clone_with_gix(
 ) -> Result<(String, String), FetchError> {
     use gix::remote::fetch::Shallow;
     use std::sync::atomic::AtomicBool;
-
-    // Determine which ref to fetch
-    let refspec = branch.or(tag);
 
     // Prepare the clone with shallow fetch (depth=1)
     let mut prepare = gix::clone::PrepareFetch::new(
@@ -362,9 +413,18 @@ fn clone_with_gix(
     .map_err(|e| FetchError::GitError(format!("Failed to prepare clone: {}", e)))?
     .with_shallow(Shallow::DepthAtRemote(1.try_into().unwrap()));
 
-    // Configure remote to fetch specific branch/tag if specified
-    if let Some(ref_name) = refspec {
-        let refspec_str = format!("+refs/heads/{0}:refs/remotes/origin/{0}", ref_name);
+    // Configure remote to fetch specific branch or tag
+    // Tags use refs/tags/, branches use refs/heads/
+    if let Some(ref tag_name) = tag {
+        let refspec_str = format!("+refs/tags/{0}:refs/tags/{0}", tag_name);
+        prepare = prepare.configure_remote(move |remote| {
+            Ok(remote.with_refspecs(
+                Some(refspec_str.as_str()),
+                gix::remote::Direction::Fetch,
+            )?)
+        });
+    } else if let Some(ref branch_name) = branch {
+        let refspec_str = format!("+refs/heads/{0}:refs/remotes/origin/{0}", branch_name);
         prepare = prepare.configure_remote(move |remote| {
             Ok(remote.with_refspecs(
                 Some(refspec_str.as_str()),
@@ -398,4 +458,78 @@ fn clone_with_gix(
     let checksum = compute_dir_hash(&dest.to_path_buf())?;
 
     Ok((revision, checksum))
+}
+
+/// A remote git tag with its version.
+#[derive(Debug, Clone)]
+pub struct GitTag {
+    /// Tag name (e.g., "1.5.0" or "v1.5.0")
+    pub name: String,
+    /// Parsed semver version (if valid)
+    pub version: Option<semver::Version>,
+    /// Commit SHA
+    pub sha: String,
+}
+
+/// Fetch available tags from a remote git repository.
+/// Uses `git ls-remote --tags` for efficiency (no clone needed).
+pub async fn list_remote_tags(url: &str) -> Result<Vec<GitTag>, FetchError> {
+    let url = url.to_string();
+
+    tokio::task::spawn_blocking(move || {
+        let output = Command::new("git")
+            .args(["ls-remote", "--tags", "--refs", &url])
+            .output()
+            .map_err(|e| FetchError::GitError(format!("Failed to run git ls-remote: {}", e)))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(FetchError::GitError(format!(
+                "git ls-remote failed: {}",
+                stderr
+            )));
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut tags = Vec::new();
+
+        for line in stdout.lines() {
+            // Format: "<sha>\trefs/tags/<tag>"
+            let parts: Vec<&str> = line.split('\t').collect();
+            if parts.len() != 2 {
+                continue;
+            }
+
+            let sha = parts[0].to_string();
+            let ref_name = parts[1];
+
+            // Extract tag name from refs/tags/<name>
+            let tag_name = ref_name
+                .strip_prefix("refs/tags/")
+                .unwrap_or(ref_name)
+                .to_string();
+
+            // Try to parse as semver (strip 'v' prefix if present)
+            let version_str = tag_name.strip_prefix('v').unwrap_or(&tag_name);
+            let version = semver::Version::parse(version_str).ok();
+
+            tags.push(GitTag {
+                name: tag_name,
+                version,
+                sha,
+            });
+        }
+
+        // Sort by version (newest first), putting non-semver tags at the end
+        tags.sort_by(|a, b| match (&b.version, &a.version) {
+            (Some(v1), Some(v2)) => v1.cmp(v2),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => b.name.cmp(&a.name),
+        });
+
+        Ok(tags)
+    })
+    .await
+    .map_err(|e| FetchError::GitError(format!("Task join error: {}", e)))?
 }
