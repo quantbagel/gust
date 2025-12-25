@@ -56,4 +56,4 @@ gust run              # Run the executable
 
 ## License
 
-MIT
+Apache-2.0
