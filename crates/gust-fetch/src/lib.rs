@@ -32,6 +32,8 @@ pub struct FetchResult {
     pub checksum: String,
     /// Git revision (if git dependency)
     pub revision: Option<String>,
+    /// Git tag used (if cloned with tag)
+    pub tag: Option<String>,
 }
 
 /// Status updates during fetch operations.
@@ -160,6 +162,7 @@ impl Fetcher {
         let dest_result = dest.clone();
         let branch = dep.branch.clone();
         let tag = dep.tag.clone();
+        let tag_for_result = dep.tag.clone();
         let name = dep.name.clone();
 
         // Use git command for better compatibility with annotated tags
@@ -173,6 +176,7 @@ impl Fetcher {
             path: dest_result,
             checksum,
             revision: Some(revision),
+            tag: tag_for_result,
         })
     }
 
@@ -216,6 +220,7 @@ impl Fetcher {
             path: dest.clone(),
             checksum,
             revision: None,
+            tag: None,
         })
     }
 
@@ -265,6 +270,7 @@ impl Fetcher {
             path: dest.clone(),
             checksum,
             revision: None,
+            tag: None,
         })
     }
 }

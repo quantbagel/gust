@@ -8,7 +8,7 @@ use gust_fetch::{FetchResult, FetchStatus, Fetcher};
 use gust_lockfile::{LockedPackage, Lockfile, LockfileDiff};
 use gust_manifest::{find_manifest, parse_transitive_deps};
 use gust_resolver::{Resolution, ResolvedDep};
-use gust_types::{Dependency, DependencySource, Manifest};
+use gust_types::{Dependency, DependencySource, Manifest, Version};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use miette::{IntoDiagnostic, Result};
 use std::collections::HashMap;
@@ -253,6 +253,7 @@ impl Installer {
                         DependencySource::Git => gust_resolver::ResolvedSource::Git {
                             url: d.git.clone().unwrap_or_default(),
                             revision: d.revision.clone().unwrap_or_else(|| "HEAD".to_string()),
+                            tag: d.tag.clone(),
                         },
                         DependencySource::Path => gust_resolver::ResolvedSource::Path {
                             path: d.path.clone().unwrap_or_default(),
@@ -264,6 +265,7 @@ impl Installer {
                     gust_resolver::ResolvedSource::Git {
                         url: String::new(),
                         revision: "HEAD".to_string(),
+                        tag: None,
                     }
                 };
 
@@ -318,10 +320,18 @@ impl Installer {
         let mut packages = HashMap::new();
 
         for pkg in &lockfile.packages {
+            // For locked packages, derive tag from version
+            let version_tag = if pkg.version != Version::new(0, 0, 0) {
+                Some(pkg.version.to_string())
+            } else {
+                None
+            };
+
             let source = match pkg.source {
                 DependencySource::Git => gust_resolver::ResolvedSource::Git {
                     url: pkg.git.clone().unwrap_or_default(),
                     revision: pkg.revision.clone().unwrap_or_default(),
+                    tag: version_tag,
                 },
                 DependencySource::Path => gust_resolver::ResolvedSource::Path {
                     path: PathBuf::new(), // Would need to store path in lockfile
@@ -356,14 +366,16 @@ impl Installer {
         let mut to_fetch: Vec<(Dependency, PathBuf)> = Vec::new();
 
         for (name, resolved) in &resolution.packages {
-            let dep = match &resolved.source {
-                gust_resolver::ResolvedSource::Git { url, revision } => {
+            let (dep, tag) = match &resolved.source {
+                gust_resolver::ResolvedSource::Git { url, revision, tag } => {
                     let mut d = Dependency::git(name, url);
                     d.revision = Some(revision.clone());
-                    // Copy branch/tag if present in original resolution
-                    d
+                    d.tag = tag.clone();
+                    (d, tag.clone())
                 }
-                gust_resolver::ResolvedSource::Path { path } => Dependency::path(name, path),
+                gust_resolver::ResolvedSource::Path { path } => {
+                    (Dependency::path(name, path), None)
+                }
                 gust_resolver::ResolvedSource::Registry => {
                     // Skip registry deps for now
                     continue;
@@ -381,6 +393,7 @@ impl Installer {
                         path: dest,
                         checksum: String::new(),
                         revision: None,
+                        tag,
                     },
                 );
             } else {
@@ -531,10 +544,17 @@ impl Installer {
             let fetch_result = fetch_results.get(name);
 
             let locked = match &resolved.source {
-                gust_resolver::ResolvedSource::Git { url, revision } => {
+                gust_resolver::ResolvedSource::Git { url, revision, tag } => {
+                    // Try to get version from tag, fallback to manifest version
+                    let version = tag
+                        .as_ref()
+                        .or_else(|| fetch_result.and_then(|r| r.tag.as_ref()))
+                        .and_then(|t| parse_version_from_tag(t))
+                        .unwrap_or_else(|| resolved.version.clone());
+
                     let mut pkg = LockedPackage::git(
                         name,
-                        resolved.version.clone(),
+                        version,
                         url,
                         fetch_result
                             .and_then(|r| r.revision.clone())
@@ -617,6 +637,26 @@ fn sanitize_name(name: &str) -> String {
             }
         })
         .collect()
+}
+
+/// Parse a version from a git tag.
+/// Handles formats like "1.5.0", "v1.5.0", "1.5.0-beta.1"
+fn parse_version_from_tag(tag: &str) -> Option<Version> {
+    let tag = tag.trim();
+
+    // Try parsing directly
+    if let Ok(v) = Version::parse(tag) {
+        return Some(v);
+    }
+
+    // Try stripping leading 'v'
+    if let Some(stripped) = tag.strip_prefix('v').or_else(|| tag.strip_prefix('V')) {
+        if let Ok(v) = Version::parse(stripped) {
+            return Some(v);
+        }
+    }
+
+    None
 }
 
 /// Result of an installation.

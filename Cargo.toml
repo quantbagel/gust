@@ -24,6 +24,8 @@ repository = "https://github.com/user/gust"
 [workspace.dependencies]
 # CLI
 clap = { version = "4.4", features = ["derive", "env", "wrap_help"] }
+clap_complete = "4.4"
+clap_mangen = "0.2"
 
 # Async
 tokio = { version = "1.35", features = ["full"] }

@@ -33,11 +33,20 @@ jobs:
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
 
+      - name: Generate completions and man page
+        run: |
+          mkdir -p dist/completions dist/man/man1
+          ./target/${{ matrix.target }}/release/gust completions bash > dist/completions/gust.bash
+          ./target/${{ matrix.target }}/release/gust completions zsh > dist/completions/_gust
+          ./target/${{ matrix.target }}/release/gust completions fish > dist/completions/gust.fish
+          ./target/${{ matrix.target }}/release/gust manpage > dist/man/man1/gust.1
+
       - name: Package (Unix)
         run: |
-          cd target/${{ matrix.target }}/release
-          tar -czvf gust-${{ matrix.target }}.tar.gz gust
-          mv gust-${{ matrix.target }}.tar.gz ../../../
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/gust dist/
+          cd dist
+          tar -czvf ../gust-${{ matrix.target }}.tar.gz gust completions man
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

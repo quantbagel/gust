@@ -16,13 +16,20 @@ class Gust < Formula
     end
   end
 
+  on_linux do
+    on_intel do
+      url "https://github.com/quantbagel/gust/releases/download/v#{version}/gust-x86_64-unknown-linux-gnu.tar.gz"
+      sha256 "PLACEHOLDER_LINUX_SHA256"
+    end
+  end
+
   def install
     bin.install "gust"
 
-    # Install shell completions
+    # Generate and install shell completions
     generate_completions_from_executable(bin/"gust", "completions")
 
-    # Install man page
+    # Generate and install man page
     man1.install Utils.safe_popen_read(bin/"gust", "manpage").to_s => "gust.1"
   end
 

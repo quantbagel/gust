@@ -45,8 +45,14 @@ pub struct ResolvedDep {
 #[derive(Debug, Clone)]
 pub enum ResolvedSource {
     Registry,
-    Git { url: String, revision: String },
-    Path { path: std::path::PathBuf },
+    Git {
+        url: String,
+        revision: String,
+        tag: Option<String>,
+    },
+    Path {
+        path: std::path::PathBuf,
+    },
 }
 
 /// A package version provider for the resolver.

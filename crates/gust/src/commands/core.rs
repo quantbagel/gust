@@ -965,7 +965,46 @@ pub async fn cache_clean(all: bool, binary_only: bool) -> Result<()> {
         }
     } else {
         println!("{} Removing unused packages...", style("→").blue().bold());
-        // TODO: Implement unused package cleanup (track last access time)
+
+        // Remove packages not accessed in last 30 days
+        let git_dir = cache.git_dir();
+        let cutoff =
+            std::time::SystemTime::now() - std::time::Duration::from_secs(30 * 24 * 60 * 60);
+        let mut removed = 0;
+
+        if git_dir.exists() {
+            if let Ok(entries) = fs::read_dir(&git_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        // Check last access time
+                        if let Ok(metadata) = fs::metadata(&path) {
+                            let accessed = metadata
+                                .accessed()
+                                .or_else(|_| metadata.modified())
+                                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+
+                            if accessed < cutoff && fs::remove_dir_all(&path).is_ok() {
+                                removed += 1;
+                                if let Some(name) = path.file_name() {
+                                    println!(
+                                        "  {} Removed {}",
+                                        style("•").dim(),
+                                        name.to_string_lossy()
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if removed == 0 {
+            println!("  {} No unused packages found", style("•").dim());
+        } else {
+            println!("  {} Removed {} unused packages", style("•").dim(), removed);
+        }
     }
 
     println!("{} Cache cleaned", style("✓").green().bold());

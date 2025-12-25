@@ -1,7 +1,9 @@
 //! Gust - A blazing fast Swift package manager.
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::Shell;
 use miette::Result;
+use std::io;
 use std::path::PathBuf;
 
 mod commands;
@@ -201,6 +203,17 @@ enum Commands {
 
     /// Check environment and diagnose issues
     Doctor,
+
+    /// Generate shell completions
+    #[command(hide = true)]
+    Completions {
+        /// Shell to generate completions for
+        shell: Shell,
+    },
+
+    /// Generate man page
+    #[command(hide = true)]
+    Manpage,
 }
 
 #[derive(Subcommand)]
@@ -351,6 +364,15 @@ async fn main() -> Result<()> {
         }
         Commands::Doctor => {
             commands::doctor().await?;
+        }
+        Commands::Completions { shell } => {
+            clap_complete::generate(shell, &mut Cli::command(), "gust", &mut io::stdout());
+        }
+        Commands::Manpage => {
+            let cmd = Cli::command();
+            let man = clap_mangen::Man::new(cmd);
+            man.render(&mut io::stdout())
+                .expect("failed to write man page");
         }
     }
 

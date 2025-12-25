@@ -255,17 +255,29 @@ impl Builder {
 
         let mut child = cmd.spawn()?;
 
+        // Collect stderr for error reporting
+        let mut error_output = Vec::new();
+
         // Stream stderr (where swift build outputs progress)
         if let Some(stderr) = child.stderr.take() {
             let reader = BufReader::new(stderr);
             let mut lines = reader.lines();
 
             while let Some(line) = lines.next_line().await? {
+                // Always collect lines for error reporting
+                error_output.push(line.clone());
+
                 if options.verbose {
                     println!("{}", line);
                 } else {
-                    // Parse and display progress
-                    if line.contains("Compiling") || line.contains("Linking") {
+                    // Parse and display progress or errors
+                    if line.contains("Compiling")
+                        || line.contains("Linking")
+                        || line.contains("error:")
+                        || line.contains("warning:")
+                        || line.contains("note:")
+                        || line.starts_with("/")
+                    {
                         println!("{}", line);
                     }
                 }
@@ -275,7 +287,20 @@ impl Builder {
         let status = child.wait().await?;
 
         if !status.success() {
-            return Err(BuildError::BuildFailed("swift build failed".to_string()));
+            // Include the last 50 lines of output in the error
+            let error_context: String = error_output
+                .iter()
+                .rev()
+                .take(50)
+                .rev()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            return Err(BuildError::BuildFailed(format!(
+                "swift build failed:\n{}",
+                error_context
+            )));
         }
 
         let duration = start.elapsed().as_secs_f64();

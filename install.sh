@@ -98,6 +98,43 @@ main() {
 
     chmod +x "$INSTALL_DIR/gust"
 
+    # Install completions if they exist in the tarball
+    if [ -d "$INSTALL_DIR/completions" ]; then
+        info "Installing shell completions..."
+
+        # Bash completions
+        if [ -f "$INSTALL_DIR/completions/gust.bash" ]; then
+            local bash_comp_dir="${BASH_COMPLETION_DIR:-$HOME/.local/share/bash-completion/completions}"
+            mkdir -p "$bash_comp_dir"
+            cp "$INSTALL_DIR/completions/gust.bash" "$bash_comp_dir/gust"
+        fi
+
+        # Zsh completions
+        if [ -f "$INSTALL_DIR/completions/_gust" ]; then
+            local zsh_comp_dir="${ZSH_COMPLETION_DIR:-$HOME/.local/share/zsh/site-functions}"
+            mkdir -p "$zsh_comp_dir"
+            cp "$INSTALL_DIR/completions/_gust" "$zsh_comp_dir/_gust"
+        fi
+
+        # Fish completions
+        if [ -f "$INSTALL_DIR/completions/gust.fish" ]; then
+            local fish_comp_dir="${FISH_COMPLETION_DIR:-$HOME/.config/fish/completions}"
+            mkdir -p "$fish_comp_dir"
+            cp "$INSTALL_DIR/completions/gust.fish" "$fish_comp_dir/gust.fish"
+        fi
+
+        rm -rf "$INSTALL_DIR/completions"
+    fi
+
+    # Install man page if it exists in the tarball
+    if [ -d "$INSTALL_DIR/man" ]; then
+        info "Installing man page..."
+        local man_dir="${MAN_DIR:-$HOME/.local/share/man/man1}"
+        mkdir -p "$man_dir"
+        cp "$INSTALL_DIR/man/man1/gust.1" "$man_dir/"
+        rm -rf "$INSTALL_DIR/man"
+    fi
+
     # Verify installation
     if ! "$INSTALL_DIR/gust" --version > /dev/null 2>&1; then
         error "Installation verification failed"
