@@ -2,6 +2,9 @@
 //!
 //! Uses miette for rich error diagnostics with suggestions.
 
+// These fields are used by thiserror/miette derive macros
+#![allow(clippy::used_underscore_binding)]
+
 pub use miette::{Diagnostic, Report, Result};
 use thiserror::Error;
 
