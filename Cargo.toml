@@ -13,13 +13,17 @@ members = [
     "crates/gust-platform",
     "crates/gust-diagnostics",
     "crates/gust-registry",
+    "crates/gust-workspace",
+    "crates/gust-plugin",
 ]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/user/gust"
+repository = "https://github.com/quantbagel/gust"
+keywords = ["swift", "package-manager", "dependency-management", "build-tool"]
+categories = ["development-tools", "command-line-utilities"]
 
 [workspace.dependencies]
 # CLI
@@ -40,7 +44,7 @@ serde_json = "1.0"
 toml = "0.8"
 
 # Dependency resolution
-pubgrub = "0.2"
+pubgrub = "0.3"
 
 # Hashing - with rayon for parallel hashing of large files, NEON SIMD on Apple Silicon
 blake3 = { version = "1.5", features = ["rayon"] }
@@ -97,3 +101,5 @@ gust-lockfile = { path = "crates/gust-lockfile" }
 gust-platform = { path = "crates/gust-platform" }
 gust-diagnostics = { path = "crates/gust-diagnostics" }
 gust-registry = { path = "crates/gust-registry" }
+gust-workspace = { path = "crates/gust-workspace" }
+gust-plugin = { path = "crates/gust-plugin" }

@@ -3,6 +3,7 @@ name = "gust-platform"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 description = "Platform and Swift toolchain detection for Gust"
 
 [dependencies]

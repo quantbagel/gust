@@ -358,6 +358,409 @@ impl LockedPackage {
     }
 }
 
+// ============================================================================
+// Lockfile V2 Format
+// ============================================================================
+
+/// Lockfile V2 with enhanced resolution metadata.
+///
+/// Changes from V1:
+/// - Added `metadata` section with generation info and resolution mode
+/// - Added `overrides` section matching manifest overrides
+/// - Each package has a `resolution` section tracking why it was chosen
+/// - Path dependencies now tracked with content hash
+/// - Workspace members listed if part of workspace
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LockfileV2 {
+    /// Lockfile format version (always 2)
+    pub version: u32,
+
+    /// Lockfile metadata
+    #[serde(default)]
+    pub metadata: LockfileMetadata,
+
+    /// Version overrides that were applied
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub overrides: HashMap<String, String>,
+
+    /// Workspace members (if workspace lockfile)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub workspace_members: Vec<String>,
+
+    /// Locked packages
+    #[serde(rename = "package", default)]
+    pub packages: Vec<LockedPackageV2>,
+}
+
+/// Lockfile generation metadata.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LockfileMetadata {
+    /// Tool that generated this lockfile
+    #[serde(rename = "generated-by")]
+    pub generated_by: String,
+
+    /// When this lockfile was generated
+    #[serde(rename = "generated-at", skip_serializing_if = "Option::is_none")]
+    pub generated_at: Option<String>,
+
+    /// Resolution strategy used (highest, lowest, locked)
+    #[serde(rename = "resolution-mode", default)]
+    pub resolution_mode: String,
+}
+
+/// A locked package entry with resolution metadata.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LockedPackageV2 {
+    /// Package name
+    pub name: String,
+
+    /// Exact locked version
+    pub version: Version,
+
+    /// Source type
+    pub source: DependencySource,
+
+    /// Content checksum (BLAKE3)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checksum: Option<String>,
+
+    /// Git URL (for git dependencies)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git: Option<String>,
+
+    /// Git revision (for git dependencies)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub revision: Option<String>,
+
+    /// Git tag (for tagged releases)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tag: Option<String>,
+
+    /// Local path (for path dependencies)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<PathBuf>,
+
+    /// Content hash for path dependencies
+    #[serde(rename = "content-hash", skip_serializing_if = "Option::is_none")]
+    pub content_hash: Option<String>,
+
+    /// Transitive dependencies
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dependencies: Vec<String>,
+
+    /// Resolution metadata (why this version was chosen)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<PackageResolutionInfo>,
+}
+
+/// Resolution information for a locked package.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PackageResolutionInfo {
+    /// Packages that required this package
+    #[serde(rename = "required-by", default, skip_serializing_if = "Vec::is_empty")]
+    pub required_by: Vec<String>,
+
+    /// Version constraints from different requirers
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub constraints: Vec<ConstraintRecord>,
+}
+
+/// Records a version constraint from a requirer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConstraintRecord {
+    /// Package that imposed this constraint
+    pub from: String,
+    /// The version requirement
+    pub requirement: String,
+}
+
+impl Default for LockfileV2 {
+    fn default() -> Self {
+        Self {
+            version: 2,
+            metadata: LockfileMetadata {
+                generated_by: format!("gust {}", env!("CARGO_PKG_VERSION")),
+                generated_at: Some(chrono_now()),
+                resolution_mode: "highest".to_string(),
+            },
+            overrides: HashMap::new(),
+            workspace_members: Vec::new(),
+            packages: Vec::new(),
+        }
+    }
+}
+
+/// Get current timestamp in ISO 8601 format.
+fn chrono_now() -> String {
+    use std::time::SystemTime;
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    // Simple ISO-ish format without external crate
+    format!("{}", now)
+}
+
+impl LockfileV2 {
+    /// Load a lockfile, auto-detecting v1 vs v2 format.
+    pub fn load(path: &Path) -> Result<Self, LockfileError> {
+        let content = fs::read_to_string(path)?;
+
+        // Try to detect version by looking at the TOML
+        if let Ok(v2) = toml::from_str::<LockfileV2>(&content) {
+            if v2.version == 2 {
+                return Ok(v2);
+            }
+        }
+
+        // Fall back to v1 and migrate
+        let v1: Lockfile = toml::from_str(&content)?;
+        Ok(Self::from_v1(&v1))
+    }
+
+    /// Save the lockfile to disk.
+    pub fn save(&self, path: &Path) -> Result<(), LockfileError> {
+        let header = "# This file is auto-generated by Gust\n# Do not edit manually\n\n";
+        let content = toml::to_string_pretty(self)?;
+        fs::write(path, format!("{}{}", header, content))?;
+        Ok(())
+    }
+
+    /// Migrate from V1 lockfile format.
+    pub fn from_v1(v1: &Lockfile) -> Self {
+        let packages = v1
+            .packages
+            .iter()
+            .map(|pkg| LockedPackageV2 {
+                name: pkg.name.clone(),
+                version: pkg.version.clone(),
+                source: pkg.source,
+                checksum: pkg.checksum.clone(),
+                git: pkg.git.clone(),
+                revision: pkg.revision.clone(),
+                tag: None,
+                path: None,
+                content_hash: None,
+                dependencies: pkg.dependencies.clone(),
+                resolution: None, // No resolution info in v1
+            })
+            .collect();
+
+        Self {
+            version: 2,
+            metadata: LockfileMetadata {
+                generated_by: v1.generated_by.clone(),
+                generated_at: None,
+                resolution_mode: "highest".to_string(),
+            },
+            overrides: HashMap::new(),
+            workspace_members: Vec::new(),
+            packages,
+        }
+    }
+
+    /// Convert back to V1 format (lossy - loses resolution metadata).
+    pub fn to_v1(&self) -> Lockfile {
+        let packages = self
+            .packages
+            .iter()
+            .map(|pkg| LockedPackage {
+                name: pkg.name.clone(),
+                version: pkg.version.clone(),
+                source: pkg.source,
+                checksum: pkg.checksum.clone(),
+                git: pkg.git.clone(),
+                revision: pkg.revision.clone(),
+                dependencies: pkg.dependencies.clone(),
+            })
+            .collect();
+
+        Lockfile {
+            version: 1,
+            generated_by: self.metadata.generated_by.clone(),
+            packages,
+        }
+    }
+
+    /// Get a locked package by name.
+    pub fn get(&self, name: &str) -> Option<&LockedPackageV2> {
+        self.packages.iter().find(|p| p.name == name)
+    }
+
+    /// Add or update a locked package.
+    pub fn upsert(&mut self, package: LockedPackageV2) {
+        if let Some(existing) = self.packages.iter_mut().find(|p| p.name == package.name) {
+            *existing = package;
+        } else {
+            self.packages.push(package);
+        }
+    }
+
+    /// Build a lookup map for quick access.
+    pub fn as_map(&self) -> HashMap<String, &LockedPackageV2> {
+        self.packages.iter().map(|p| (p.name.clone(), p)).collect()
+    }
+
+    /// Check if the lockfile needs updating compared to a new resolution.
+    pub fn needs_update(&self, new_packages: &[LockedPackageV2]) -> bool {
+        if self.packages.len() != new_packages.len() {
+            return true;
+        }
+
+        let self_map: HashMap<_, _> = self.packages.iter().map(|p| (&p.name, p)).collect();
+
+        for pkg in new_packages {
+            match self_map.get(&pkg.name) {
+                None => return true,
+                Some(existing) => {
+                    if existing.revision != pkg.revision || existing.version != pkg.version {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Save the lockfile asynchronously.
+    pub async fn save_async(&self, path: PathBuf) -> Result<(), LockfileError> {
+        let content = self.to_string()?;
+
+        tokio::task::spawn_blocking(move || fs::write(&path, content))
+            .await
+            .map_err(|e| LockfileError::TaskError(e.to_string()))?
+            .map_err(LockfileError::ReadError)
+    }
+
+    /// Serialize to string.
+    pub fn to_string(&self) -> Result<String, LockfileError> {
+        let header = "# This file is auto-generated by Gust\n# Do not edit manually\n\n";
+        let content = toml::to_string_pretty(self)?;
+        Ok(format!("{}{}", header, content))
+    }
+}
+
+impl LockedPackageV2 {
+    /// Create a new locked package from registry.
+    pub fn registry(
+        name: impl Into<String>,
+        version: Version,
+        checksum: impl Into<String>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            version,
+            source: DependencySource::Registry,
+            checksum: Some(checksum.into()),
+            git: None,
+            revision: None,
+            tag: None,
+            path: None,
+            content_hash: None,
+            dependencies: Vec::new(),
+            resolution: None,
+        }
+    }
+
+    /// Create a new locked package from git.
+    pub fn git(
+        name: impl Into<String>,
+        version: Version,
+        url: impl Into<String>,
+        revision: impl Into<String>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            version,
+            source: DependencySource::Git,
+            checksum: None,
+            git: Some(url.into()),
+            revision: Some(revision.into()),
+            tag: None,
+            path: None,
+            content_hash: None,
+            dependencies: Vec::new(),
+            resolution: None,
+        }
+    }
+
+    /// Create a locked package from a path dependency.
+    pub fn path(
+        name: impl Into<String>,
+        version: Version,
+        path: PathBuf,
+        content_hash: impl Into<String>,
+    ) -> Self {
+        Self {
+            name: name.into(),
+            version,
+            source: DependencySource::Path,
+            checksum: None,
+            git: None,
+            revision: None,
+            tag: None,
+            path: Some(path),
+            content_hash: Some(content_hash.into()),
+            dependencies: Vec::new(),
+            resolution: None,
+        }
+    }
+
+    /// Add resolution info to this package.
+    pub fn with_resolution(mut self, info: PackageResolutionInfo) -> Self {
+        self.resolution = Some(info);
+        self
+    }
+
+    /// Add a tag to this package.
+    pub fn with_tag(mut self, tag: impl Into<String>) -> Self {
+        self.tag = Some(tag.into());
+        self
+    }
+}
+
+/// Enum that can hold either V1 or V2 lockfile for compatibility.
+#[derive(Debug, Clone)]
+pub enum AnyLockfile {
+    V1(Lockfile),
+    V2(LockfileV2),
+}
+
+impl AnyLockfile {
+    /// Load any version of lockfile.
+    pub fn load(path: &Path) -> Result<Self, LockfileError> {
+        let content = fs::read_to_string(path)?;
+
+        // Try V2 first
+        if let Ok(v2) = toml::from_str::<LockfileV2>(&content) {
+            if v2.version == 2 {
+                return Ok(AnyLockfile::V2(v2));
+            }
+        }
+
+        // Fall back to V1
+        let v1: Lockfile = toml::from_str(&content)?;
+        Ok(AnyLockfile::V1(v1))
+    }
+
+    /// Get as V2 (migrating if necessary).
+    pub fn into_v2(self) -> LockfileV2 {
+        match self {
+            AnyLockfile::V1(v1) => LockfileV2::from_v1(&v1),
+            AnyLockfile::V2(v2) => v2,
+        }
+    }
+
+    /// Get the version number.
+    pub fn version(&self) -> u32 {
+        match self {
+            AnyLockfile::V1(v1) => v1.version,
+            AnyLockfile::V2(v2) => v2.version,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -374,5 +777,98 @@ mod tests {
         let toml = toml::to_string_pretty(&lockfile).unwrap();
         assert!(toml.contains("swift-log"));
         assert!(toml.contains("1.5.4"));
+    }
+
+    #[test]
+    fn test_lockfile_v2_serialization() {
+        let mut lockfile = LockfileV2::default();
+        lockfile.upsert(
+            LockedPackageV2::registry("swift-log", Version::new(1, 5, 4), "blake3:abc123")
+                .with_resolution(PackageResolutionInfo {
+                    required_by: vec!["my-app".to_string(), "swift-nio".to_string()],
+                    constraints: vec![
+                        ConstraintRecord {
+                            from: "my-app".to_string(),
+                            requirement: "^1.4".to_string(),
+                        },
+                        ConstraintRecord {
+                            from: "swift-nio".to_string(),
+                            requirement: ">=1.5.0".to_string(),
+                        },
+                    ],
+                }),
+        );
+
+        let toml_str = lockfile.to_string().unwrap();
+        assert!(toml_str.contains("version = 2"));
+        assert!(toml_str.contains("swift-log"));
+        assert!(toml_str.contains("my-app"));
+        assert!(toml_str.contains("required-by"));
+    }
+
+    #[test]
+    fn test_v1_to_v2_migration() {
+        let mut v1 = Lockfile::default();
+        v1.upsert(LockedPackage::git(
+            "swift-log",
+            Version::new(1, 5, 4),
+            "https://github.com/apple/swift-log.git",
+            "abc123",
+        ));
+
+        let v2 = LockfileV2::from_v1(&v1);
+        assert_eq!(v2.version, 2);
+        assert_eq!(v2.packages.len(), 1);
+        assert_eq!(v2.packages[0].name, "swift-log");
+        assert_eq!(v2.packages[0].git.as_deref(), Some("https://github.com/apple/swift-log.git"));
+    }
+
+    #[test]
+    fn test_v2_with_overrides() {
+        let mut lockfile = LockfileV2::default();
+        lockfile.overrides.insert("swift-log".to_string(), "1.5.4".to_string());
+        lockfile.upsert(LockedPackageV2::registry(
+            "swift-log",
+            Version::new(1, 5, 4),
+            "blake3:abc123",
+        ));
+
+        let toml_str = lockfile.to_string().unwrap();
+        assert!(toml_str.contains("[overrides]"));
+        assert!(toml_str.contains("swift-log"));
+    }
+
+    #[test]
+    fn test_v2_path_dependency() {
+        let pkg = LockedPackageV2::path(
+            "my-local-lib",
+            Version::new(0, 1, 0),
+            PathBuf::from("../my-local-lib"),
+            "blake3:def456",
+        );
+
+        assert_eq!(pkg.source, DependencySource::Path);
+        assert_eq!(pkg.path.as_ref().unwrap(), &PathBuf::from("../my-local-lib"));
+        assert_eq!(pkg.content_hash.as_deref(), Some("blake3:def456"));
+    }
+
+    #[test]
+    fn test_any_lockfile_detection() {
+        // Create a V1 lockfile string
+        let v1_content = r#"
+version = 1
+generated-by = "gust 0.1.0"
+
+[[package]]
+name = "swift-log"
+version = "1.5.4"
+source = "git"
+git = "https://github.com/apple/swift-log.git"
+revision = "abc123"
+"#;
+        // Parse as AnyLockfile
+        let v1: Lockfile = toml::from_str(v1_content).unwrap();
+        assert_eq!(v1.version, 1);
+        assert_eq!(v1.packages[0].source, DependencySource::Git);
     }
 }

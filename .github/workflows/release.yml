@@ -7,11 +7,96 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
 
 jobs:
+  # Run all tests before building release artifacts
+  test:
+    name: Test Suite
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: macos-cargo-test-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            macos-cargo-test-
+
+      - name: Check Swift version
+        run: swift --version
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Run Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Run all tests
+        run: cargo test --all-features --workspace
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: CLI smoke test
+        run: |
+          ./target/release/gust --version
+          ./target/release/gust --help
+
+  # Integration tests to verify Swift tooling works
+  integration:
+    name: Integration Test
+    runs-on: macos-latest
+    needs: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: macos-cargo-integration-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Create and test package
+        run: |
+          cd /tmp
+          $GITHUB_WORKSPACE/target/release/gust new testpkg --type exe
+          cd testpkg
+          cat Gust.toml
+          $GITHUB_WORKSPACE/target/release/gust add swift-log --git https://github.com/apple/swift-log.git --tag 1.5.0
+          $GITHUB_WORKSPACE/target/release/gust install
+          $GITHUB_WORKSPACE/target/release/gust outdated
+          $GITHUB_WORKSPACE/target/release/gust tree
+
   build:
     name: Build (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
+    needs: [test, integration]
     strategy:
       matrix:
         include:
@@ -20,6 +105,8 @@ jobs:
           - target: aarch64-apple-darwin
             os: macos-latest
           - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
 
     steps:
@@ -30,10 +117,19 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - name: Install cross-compilation tools (Linux ARM64)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
 
       - name: Generate completions and man page
+        if: matrix.target != 'aarch64-unknown-linux-gnu'
         run: |
           mkdir -p dist/completions dist/man/man1
           ./target/${{ matrix.target }}/release/gust completions bash > dist/completions/gust.bash
@@ -46,7 +142,7 @@ jobs:
           mkdir -p dist
           cp target/${{ matrix.target }}/release/gust dist/
           cd dist
-          tar -czvf ../gust-${{ matrix.target }}.tar.gz gust completions man
+          tar -czvf ../gust-${{ matrix.target }}.tar.gz gust completions man || tar -czvf ../gust-${{ matrix.target }}.tar.gz gust
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -76,3 +172,82 @@ jobs:
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Publish all crates to crates.io in dependency order
+  publish:
+    name: Publish to crates.io
+    needs: release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Publish crates (in dependency order)
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -e
+
+          # Helper function to publish with retry
+          publish_crate() {
+            local crate=$1
+            echo "Publishing $crate..."
+            cd crates/$crate
+
+            # Check if already published
+            if cargo search $crate 2>/dev/null | grep -q "^$crate = "; then
+              CURRENT_VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+              PUBLISHED_VERSION=$(cargo search $crate 2>/dev/null | head -1 | sed 's/.*= "\([^"]*\)".*/\1/')
+              if [ "$CURRENT_VERSION" = "$PUBLISHED_VERSION" ]; then
+                echo "$crate $CURRENT_VERSION already published, skipping..."
+                cd ../..
+                return 0
+              fi
+            fi
+
+            # Publish with retry for index sync delays
+            for i in 1 2 3; do
+              if cargo publish --no-verify; then
+                echo "$crate published successfully"
+                cd ../..
+                sleep 30  # Wait for crates.io index to update
+                return 0
+              fi
+              echo "Attempt $i failed, retrying in 60s..."
+              sleep 60
+            done
+
+            echo "Failed to publish $crate after 3 attempts"
+            cd ../..
+            return 1
+          }
+
+          # Level 0: No internal dependencies
+          publish_crate gust-types
+          publish_crate gust-platform
+          publish_crate gust-diagnostics
+
+          # Level 1: Depends on level 0
+          publish_crate gust-cache
+          publish_crate gust-manifest
+          publish_crate gust-resolver
+          publish_crate gust-registry
+
+          # Level 2: Depends on levels 0-1
+          publish_crate gust-lockfile
+          publish_crate gust-binary-cache
+          publish_crate gust-fetch
+
+          # Level 3: Depends on levels 0-2
+          publish_crate gust-build
+          publish_crate gust-workspace
+          publish_crate gust-plugin
+
+          # Level 4: Main CLI (depends on everything)
+          publish_crate gust
+
+          echo "All crates published successfully!"

@@ -7,7 +7,7 @@ mod cache;
 pub use cache::{CacheStats, ManifestCache};
 use gust_types::{
     BinaryCacheConfig, BuildSettings, Dependency, Manifest, Package, Target, TargetType, Version,
-    VersionReq,
+    VersionReq, WorkspaceConfig, WorkspacePackageDefaults,
 };
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -68,6 +68,15 @@ struct RawGustToml {
     binary_cache: Option<BinaryCacheConfig>,
     #[serde(default)]
     build: Option<BuildSettings>,
+    /// Version overrides - force specific versions regardless of constraints
+    #[serde(default)]
+    overrides: HashMap<String, String>,
+    /// Additional version constraints without adding as dependencies
+    #[serde(default)]
+    constraints: HashMap<String, String>,
+    /// Workspace configuration (if this is a workspace root)
+    #[serde(default)]
+    workspace: Option<RawWorkspace>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -128,6 +137,36 @@ struct RawTarget {
     path: Option<PathBuf>,
     #[serde(default)]
     dependencies: Vec<String>,
+}
+
+/// Raw workspace configuration
+#[derive(Debug, Deserialize)]
+struct RawWorkspace {
+    /// Glob patterns for workspace members
+    #[serde(default)]
+    members: Vec<String>,
+    /// Glob patterns to exclude from workspace
+    #[serde(default)]
+    exclude: Vec<String>,
+    /// Shared dependencies for workspace inheritance
+    #[serde(default)]
+    dependencies: HashMap<String, RawDependency>,
+    /// Default package metadata for workspace members
+    #[serde(default, rename = "package")]
+    package_defaults: Option<RawWorkspacePackageDefaults>,
+}
+
+/// Default package values that can be inherited by workspace members
+#[derive(Debug, Deserialize, Default)]
+struct RawWorkspacePackageDefaults {
+    #[serde(default, rename = "swift-tools-version")]
+    swift_tools_version: Option<String>,
+    #[serde(default)]
+    authors: Option<Vec<String>>,
+    #[serde(default)]
+    license: Option<String>,
+    #[serde(default)]
+    repository: Option<String>,
 }
 
 /// Parse a Gust.toml file.
@@ -192,6 +231,33 @@ pub fn parse_gust_toml(path: &Path) -> Result<Manifest, ManifestError> {
         })
         .collect::<Result<Vec<_>, ManifestError>>()?;
 
+    // Convert workspace config if present
+    let workspace = raw.workspace.map(|ws| {
+        // Parse workspace shared dependencies
+        let deps = ws
+            .dependencies
+            .into_iter()
+            .filter_map(|(name, raw_dep)| {
+                parse_raw_dependency(&name, raw_dep)
+                    .ok()
+                    .map(|dep| (name, dep))
+            })
+            .collect();
+
+        WorkspaceConfig {
+            members: ws.members,
+            exclude: ws.exclude,
+            dependencies: deps,
+            dev_dependencies: HashMap::new(), // Could add [workspace.dev-dependencies] in future
+            package: ws.package_defaults.map(|p| WorkspacePackageDefaults {
+                swift_tools_version: p.swift_tools_version,
+                authors: p.authors,
+                license: p.license,
+                repository: p.repository,
+            }),
+        }
+    });
+
     Ok(Manifest {
         package,
         dependencies,
@@ -199,6 +265,9 @@ pub fn parse_gust_toml(path: &Path) -> Result<Manifest, ManifestError> {
         targets,
         binary_cache: raw.binary_cache,
         build: raw.build,
+        overrides: raw.overrides,
+        constraints: raw.constraints,
+        workspace,
     })
 }
 
@@ -378,6 +447,9 @@ fn convert_spm_json(json: serde_json::Value) -> Result<Manifest, ManifestError> 
         targets,
         binary_cache: None,
         build: None,
+        overrides: HashMap::new(),
+        constraints: HashMap::new(),
+        workspace: None,
     })
 }
 
@@ -603,5 +675,61 @@ alamofire = { git = "https://github.com/Alamofire/Alamofire.git", tag = "5.8.0" 
             }
             _ => panic!("Expected full dependency"),
         }
+    }
+
+    #[test]
+    fn test_parse_overrides_and_constraints() {
+        let toml = r#"
+[package]
+name = "MyApp"
+version = "1.0.0"
+
+[dependencies]
+swift-log = "^1.4"
+swift-nio = { git = "https://github.com/apple/swift-nio.git", tag = "2.50.0" }
+
+[overrides]
+swift-log = "1.5.4"
+
+[constraints]
+swift-atomics = ">=1.1.0"
+"#;
+        let raw: RawGustToml = toml::from_str(toml).unwrap();
+        assert_eq!(raw.overrides.get("swift-log"), Some(&"1.5.4".to_string()));
+        assert_eq!(
+            raw.constraints.get("swift-atomics"),
+            Some(&">=1.1.0".to_string())
+        );
+    }
+
+    #[test]
+    fn test_parse_workspace() {
+        let toml = r#"
+[package]
+name = "workspace-root"
+version = "0.1.0"
+
+[workspace]
+members = ["packages/*", "apps/*"]
+exclude = ["packages/deprecated-*"]
+
+[workspace.dependencies]
+swift-log = "1.5"
+swift-nio = { git = "https://github.com/apple/swift-nio.git", tag = "2.60.0" }
+
+[workspace.package]
+swift-tools-version = "5.9"
+license = "MIT"
+"#;
+        let raw: RawGustToml = toml::from_str(toml).unwrap();
+        let ws = raw.workspace.expect("workspace should be present");
+        assert_eq!(ws.members, vec!["packages/*", "apps/*"]);
+        assert_eq!(ws.exclude, vec!["packages/deprecated-*"]);
+        assert!(ws.dependencies.contains_key("swift-log"));
+        assert!(ws.dependencies.contains_key("swift-nio"));
+
+        let defaults = ws.package_defaults.expect("package defaults should be present");
+        assert_eq!(defaults.swift_tools_version, Some("5.9".to_string()));
+        assert_eq!(defaults.license, Some("MIT".to_string()));
     }
 }

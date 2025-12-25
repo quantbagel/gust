@@ -245,6 +245,15 @@ pub struct Manifest {
     /// Build settings
     #[serde(default)]
     pub build: Option<BuildSettings>,
+    /// Version overrides (force specific versions)
+    #[serde(default)]
+    pub overrides: HashMap<String, String>,
+    /// Additional version constraints
+    #[serde(default)]
+    pub constraints: HashMap<String, String>,
+    /// Workspace configuration (only present at workspace root)
+    #[serde(default)]
+    pub workspace: Option<WorkspaceConfig>,
 }
 
 /// Binary cache configuration.
@@ -330,6 +339,233 @@ pub struct Platform {
     pub name: String,
     /// Minimum version
     pub version: Option<String>,
+}
+
+// ============================================================================
+// Resolution Configuration Types
+// ============================================================================
+
+/// Version override configuration.
+///
+/// Overrides force a specific version to be used regardless of what other
+/// packages request. This is useful for resolving conflicts or pinning
+/// specific versions for security reasons.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VersionOverride {
+    /// The package name to override
+    pub package: String,
+    /// The version to force
+    pub version: VersionReq,
+}
+
+/// Version constraint configuration.
+///
+/// Constraints add additional version requirements without adding the package
+/// as a direct dependency. This is useful for enforcing minimum versions
+/// across transitive dependencies.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VersionConstraint {
+    /// The package name to constrain
+    pub package: String,
+    /// The version constraint to apply
+    pub version: VersionReq,
+}
+
+/// Resolution options that affect how dependencies are resolved.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ResolutionOptions {
+    /// Version overrides (force specific versions)
+    #[serde(default)]
+    pub overrides: Vec<VersionOverride>,
+    /// Additional version constraints
+    #[serde(default)]
+    pub constraints: Vec<VersionConstraint>,
+    /// Resolution strategy
+    #[serde(default)]
+    pub strategy: ResolutionStrategy,
+    /// Whether to prefer pre-release versions
+    #[serde(default)]
+    pub prefer_prerelease: bool,
+}
+
+/// The strategy used to select versions during resolution.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ResolutionStrategy {
+    /// Always pick the highest compatible version (default)
+    #[default]
+    Highest,
+    /// Pick the lowest compatible version (useful for testing compatibility)
+    Lowest,
+    /// Prefer versions from the existing lockfile
+    Locked,
+}
+
+/// Metadata about why a version was selected during resolution.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ResolutionMetadata {
+    /// Packages that required this dependency
+    #[serde(default, rename = "required-by")]
+    pub required_by: Vec<String>,
+    /// The version constraints that led to this choice
+    #[serde(default)]
+    pub constraints: Vec<ConstraintInfo>,
+}
+
+/// Information about a constraint that was applied.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConstraintInfo {
+    /// The package that imposed this constraint
+    pub from: String,
+    /// The version requirement string
+    pub requirement: String,
+}
+
+// ============================================================================
+// Workspace Types
+// ============================================================================
+
+/// Workspace configuration for multi-package monorepos.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WorkspaceConfig {
+    /// Glob patterns for member packages
+    #[serde(default)]
+    pub members: Vec<String>,
+    /// Glob patterns to exclude from member discovery
+    #[serde(default)]
+    pub exclude: Vec<String>,
+    /// Shared dependency versions (inherited by members)
+    #[serde(default)]
+    pub dependencies: HashMap<String, Dependency>,
+    /// Shared dev dependencies
+    #[serde(default, rename = "dev-dependencies")]
+    pub dev_dependencies: HashMap<String, Dependency>,
+    /// Default package metadata for workspace members
+    #[serde(default)]
+    pub package: Option<WorkspacePackageDefaults>,
+}
+
+/// Default package metadata that can be inherited by workspace members.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WorkspacePackageDefaults {
+    /// Default Swift tools version
+    #[serde(default, rename = "swift-tools-version")]
+    pub swift_tools_version: Option<String>,
+    /// Default authors
+    #[serde(default)]
+    pub authors: Option<Vec<String>>,
+    /// Default license
+    #[serde(default)]
+    pub license: Option<String>,
+    /// Default repository
+    #[serde(default)]
+    pub repository: Option<String>,
+}
+
+/// A workspace member package.
+#[derive(Debug, Clone)]
+pub struct WorkspaceMember {
+    /// Path relative to workspace root
+    pub path: PathBuf,
+    /// Absolute path for file operations
+    pub absolute_path: PathBuf,
+    /// Package name
+    pub name: String,
+    /// Parsed manifest
+    pub manifest: Manifest,
+    /// Whether this member is also the workspace root
+    pub is_root: bool,
+}
+
+/// A complete workspace.
+#[derive(Debug, Clone)]
+pub struct Workspace {
+    /// Workspace root directory
+    pub root: PathBuf,
+    /// Workspace configuration
+    pub config: WorkspaceConfig,
+    /// All member packages
+    pub members: Vec<WorkspaceMember>,
+    /// Map of member name to index for quick lookup
+    pub member_index: HashMap<String, usize>,
+}
+
+// ============================================================================
+// Plugin Types
+// ============================================================================
+
+/// Plugin capability type.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum PluginCapability {
+    /// Build tool plugins run during build to generate sources/resources
+    BuildTool,
+    /// Command plugins provide custom CLI commands
+    Command(CommandPluginCapability),
+}
+
+/// Command plugin configuration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommandPluginCapability {
+    /// The intent/purpose of this command plugin
+    pub intent: CommandIntent,
+    /// Permissions required by the plugin
+    #[serde(default)]
+    pub permissions: Vec<PluginPermission>,
+}
+
+/// Command plugin intent.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum CommandIntent {
+    /// Documentation generation
+    DocumentationGeneration,
+    /// Source code formatting
+    SourceCodeFormatting,
+    /// Custom intent with description
+    Custom {
+        verb: String,
+        description: String,
+    },
+}
+
+/// Permissions that plugins can request.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum PluginPermission {
+    /// Write to package directory
+    WriteToPackageDirectory { reason: String },
+    /// Network access
+    AllowNetworkConnections { scope: NetworkScope, reason: String },
+}
+
+/// Network access scope for plugins.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum NetworkScope {
+    /// No network access
+    None,
+    /// Local connections only (with port)
+    Local(u16),
+    /// All outgoing connections
+    All,
+    /// Docker connections
+    Docker,
+}
+
+/// Information about a discovered plugin.
+#[derive(Debug, Clone)]
+pub struct DiscoveredPlugin {
+    /// Plugin name
+    pub name: String,
+    /// Which package provides this plugin
+    pub providing_package: String,
+    /// Plugin capability
+    pub capability: PluginCapability,
+    /// Path to the compiled plugin executable
+    pub executable_path: PathBuf,
+    /// Path to the plugin source
+    pub source_path: PathBuf,
 }
 
 #[cfg(test)]

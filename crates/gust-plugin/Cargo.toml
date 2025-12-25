@@ -1,0 +1,32 @@
+[package]
+name = "gust-plugin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Plugin system for Gust package manager (SwiftPM compatible)"
+
+[dependencies]
+gust-types.workspace = true
+gust-manifest.workspace = true
+gust-cache.workspace = true
+
+# Serialization (for plugin protocol)
+serde.workspace = true
+serde_json.workspace = true
+
+# Error handling
+thiserror.workspace = true
+
+# Async
+tokio.workspace = true
+futures.workspace = true
+
+# Logging
+tracing.workspace = true
+
+# Platform
+which.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

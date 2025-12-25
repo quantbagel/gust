@@ -312,7 +312,10 @@ impl Installer {
             tracing::warn!("Reached maximum resolution depth, some transitive deps may be missing");
         }
 
-        Ok(Resolution { packages })
+        Ok(Resolution {
+            packages,
+            metadata: HashMap::new(),
+        })
     }
 
     /// Create resolution from existing lockfile.
@@ -350,7 +353,10 @@ impl Installer {
             );
         }
 
-        Ok(Resolution { packages })
+        Ok(Resolution {
+            packages,
+            metadata: HashMap::new(),
+        })
     }
 
     /// Fetch all packages in parallel.

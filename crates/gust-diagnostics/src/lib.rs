@@ -43,6 +43,43 @@ pub enum GustError {
         help: String,
     },
 
+    #[error("No solution found for dependency constraints")]
+    #[diagnostic(
+        code(gust::resolve::no_solution),
+        help("Try relaxing version constraints or adding an override in [overrides]")
+    )]
+    NoSolution {
+        /// Human-readable derivation tree from PubGrub
+        derivation: String,
+        /// Suggested fixes
+        suggestions: Vec<String>,
+    },
+
+    #[error("No version of '{package}' satisfies '{requirement}'")]
+    #[diagnostic(
+        code(gust::resolve::no_matching_version),
+        help("Available versions: {available}")
+    )]
+    NoMatchingVersion {
+        package: String,
+        requirement: String,
+        available: String,
+    },
+
+    #[error("Dependency cycle detected")]
+    #[diagnostic(
+        code(gust::resolve::cycle),
+        help("Cycles are not allowed in Swift package dependencies")
+    )]
+    DependencyCycle {
+        /// The cycle path: A -> B -> C -> A
+        cycle: Vec<String>,
+    },
+
+    #[error("Resolution was cancelled")]
+    #[diagnostic(code(gust::resolve::cancelled))]
+    ResolutionCancelled,
+
     #[error("Build failed for target '{target}'")]
     #[diagnostic(code(gust::build::failed))]
     BuildFailed {
@@ -101,6 +138,45 @@ impl GustError {
     pub fn network(message: impl Into<String>) -> Self {
         Self::NetworkError {
             message: message.into(),
+        }
+    }
+
+    pub fn no_solution(derivation: impl Into<String>, suggestions: Vec<String>) -> Self {
+        Self::NoSolution {
+            derivation: derivation.into(),
+            suggestions,
+        }
+    }
+
+    pub fn no_matching_version(
+        package: impl Into<String>,
+        requirement: impl Into<String>,
+        available: Vec<String>,
+    ) -> Self {
+        Self::NoMatchingVersion {
+            package: package.into(),
+            requirement: requirement.into(),
+            available: if available.is_empty() {
+                "none".to_string()
+            } else {
+                available.join(", ")
+            },
+        }
+    }
+
+    pub fn dependency_cycle(cycle: Vec<String>) -> Self {
+        Self::DependencyCycle { cycle }
+    }
+
+    pub fn version_conflict(
+        package: impl Into<String>,
+        required: Vec<String>,
+        help: impl Into<String>,
+    ) -> Self {
+        Self::VersionConflict {
+            package: package.into(),
+            required,
+            help: help.into(),
         }
     }
 }
