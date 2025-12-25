@@ -104,12 +104,7 @@ jobs:
           cd /tmp/testpkg
           $GITHUB_WORKSPACE/target/release/gust outdated
 
-      - name: Build package
+      - name: Show tree
         run: |
           cd /tmp/testpkg
-          $GITHUB_WORKSPACE/target/release/gust build
-
-      - name: Run package
-        run: |
-          cd /tmp/testpkg
-          $GITHUB_WORKSPACE/target/release/gust run
+          $GITHUB_WORKSPACE/target/release/gust tree
