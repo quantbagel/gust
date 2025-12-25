@@ -189,13 +189,11 @@ mod tests {
 
     #[test]
     fn test_parse_github_url() {
-        let (owner, name) =
-            parse_github_url("https://github.com/apple/swift-log.git").unwrap();
+        let (owner, name) = parse_github_url("https://github.com/apple/swift-log.git").unwrap();
         assert_eq!(owner, "apple");
         assert_eq!(name, "swift-log");
 
-        let (owner, name) =
-            parse_github_url("https://github.com/vapor/vapor").unwrap();
+        let (owner, name) = parse_github_url("https://github.com/vapor/vapor").unwrap();
         assert_eq!(owner, "vapor");
         assert_eq!(name, "vapor");
     }
