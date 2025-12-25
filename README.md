@@ -2,9 +2,17 @@
 
 An extremely fast Swift package manager, written in Rust.
 
+<p align="center">
+  <img src="assets/benchmark.png" alt="Gust vs SwiftPM benchmark" width="800">
+</p>
+
+<p align="center">
+  <em>Benchmarked on Vapor (19 deps, 28 transitive) &mdash; up to 265x faster</em>
+</p>
+
 ## Highlights
 
-- **10-100x faster** than SwiftPM for common operations
+- **4-265x faster** than SwiftPM for common operations
 - **Parallel dependency fetching** with concurrent git clones
 - **Content-addressable cache** with hard links (pnpm-style)
 - **Binary artifact caching** for near-instant rebuilds
