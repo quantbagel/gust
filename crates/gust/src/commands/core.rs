@@ -1,5 +1,7 @@
-//! CLI command implementations.
+//! Core CLI command implementations.
 
+use crate::commands::ui::{self, pkg, dim, green, separator};
+use crate::commands::version::{check_all_for_updates, filter_breaking};
 use crate::install::{InstallOptions, Installer};
 use console::style;
 use miette::{IntoDiagnostic, Result};
@@ -666,105 +668,33 @@ pub async fn update(package: Option<&str>, breaking: bool) -> Result<()> {
     let packages_to_check: Vec<_> = lockfile
         .packages
         .iter()
-        .filter(|pkg| {
-            if let Some(name) = package {
-                pkg.name == name
-            } else {
-                true
-            }
-        })
+        .filter(|p| package.map_or(true, |name| p.name == name))
         .collect();
 
     if packages_to_check.is_empty() {
         if let Some(name) = package {
             return Err(miette::miette!("Package '{}' not found in lockfile", name));
         }
-        println!("{} No dependencies to update", style("✓").green().bold());
+        ui::success("No dependencies to update");
         return Ok(());
     }
 
-    println!(
-        "{} Checking {} package(s) for updates...",
-        style("→").blue().bold(),
-        packages_to_check.len()
-    );
+    ui::info(format!("Checking {} package(s) for updates...", packages_to_check.len()));
 
-    // Check each git dependency for newer tags in parallel
-    let mut tasks = Vec::new();
+    // Check for updates using shared helper
+    let all_updates = check_all_for_updates(&packages_to_check).await;
 
-    for pkg in &packages_to_check {
-        if let Some(ref git_url) = pkg.git {
-            let name = pkg.name.clone();
-            let current_version = pkg.version.to_string();
-            let url = git_url.clone();
-
-            tasks.push(tokio::spawn(async move {
-                match gust_fetch::list_remote_tags(&url).await {
-                    Ok(tags) => {
-                        if let Some(latest) = tags.iter().find(|t| t.version.is_some()) {
-                            let latest_version = latest.version.as_ref().unwrap();
-                            let current = semver::Version::parse(&current_version).ok();
-
-                            if let Some(ref curr) = current {
-                                if latest_version > curr {
-                                    return Some((name, current_version, latest.name.clone(), latest_version.clone()));
-                                }
-                            }
-                        }
-                        None
-                    }
-                    Err(_) => None,
-                }
-            }));
-        }
-    }
-
-    // Collect updates
-    let mut updates: Vec<(String, String, String, semver::Version)> = Vec::new();
-    for task in tasks {
-        if let Ok(Some(info)) = task.await {
-            updates.push(info);
-        }
-    }
-
-    if updates.is_empty() {
-        println!(
-            "{} All dependencies are up to date",
-            style("✓").green().bold()
-        );
+    if all_updates.is_empty() {
+        ui::success("All dependencies are up to date");
         return Ok(());
     }
 
-    // Filter by breaking changes if requested
-    let updates: Vec<_> = if breaking {
-        updates
-    } else {
-        updates
-            .into_iter()
-            .filter(|(_, current, _, latest)| {
-                if let Ok(curr) = semver::Version::parse(current) {
-                    // Only non-breaking updates (same major version, or 0.x.y -> 0.x.z)
-                    if curr.major == 0 && latest.major == 0 {
-                        curr.minor == latest.minor
-                    } else {
-                        curr.major == latest.major
-                    }
-                } else {
-                    true
-                }
-            })
-            .collect()
-    };
+    // Filter by breaking changes
+    let updates = filter_breaking(all_updates, breaking);
 
     if updates.is_empty() {
-        println!(
-            "{} No non-breaking updates available",
-            style("✓").green().bold()
-        );
-        println!(
-            "  Run {} to include breaking changes",
-            style("gust update --breaking").cyan()
-        );
+        ui::success("No non-breaking updates available");
+        println!("  Run {} to include breaking changes", pkg("gust update --breaking"));
         return Ok(());
     }
 
@@ -775,46 +705,11 @@ pub async fn update(package: Option<&str>, breaking: bool) -> Result<()> {
         style("Current").bold(),
         style("New").bold()
     );
-    println!("{}", style("─".repeat(60)).dim());
+    separator(60);
 
-    for (name, current, new_tag, _) in &updates {
-        println!(
-            "{:<30} {:<15} {}",
-            style(name).cyan(),
-            style(current).dim(),
-            style(new_tag).green()
-        );
-
-        // Update the manifest to use the new tag
-        // Look for patterns like: tag = "old_version" for this package
-        let patterns = [
-            format!("{} = {{ git =", name),
-            format!("{} = {{git =", name),
-        ];
-
-        for pattern in &patterns {
-            if let Some(start_idx) = manifest_content.find(pattern) {
-                // Find the line containing this dependency
-                let line_start = manifest_content[..start_idx].rfind('\n').map(|i| i + 1).unwrap_or(0);
-                let line_end = manifest_content[start_idx..].find('\n').map(|i| start_idx + i).unwrap_or(manifest_content.len());
-                let line = &manifest_content[line_start..line_end];
-
-                // Replace tag = "..." with new tag
-                if let Some(tag_start) = line.find("tag = \"") {
-                    let tag_value_start = tag_start + 7;
-                    if let Some(tag_end) = line[tag_value_start..].find('"') {
-                        let old_line = line.to_string();
-                        let new_line = format!(
-                            "{}{}{}",
-                            &line[..tag_value_start],
-                            new_tag,
-                            &line[tag_value_start + tag_end..]
-                        );
-                        manifest_content = manifest_content.replace(&old_line, &new_line);
-                    }
-                }
-            }
-        }
+    for u in &updates {
+        println!("{:<30} {:<15} {}", pkg(&u.name), dim(&u.current), green(&u.latest_tag));
+        update_manifest_tag(&mut manifest_content, &u.name, &u.latest_tag);
     }
 
     // Write updated manifest
@@ -822,8 +717,8 @@ pub async fn update(package: Option<&str>, breaking: bool) -> Result<()> {
 
     // Clear the cache for updated packages so they get re-fetched
     let cache = GlobalCache::open().into_diagnostic()?;
-    for (name, _, _, _) in &updates {
-        let cache_path = cache.git_dir().join(name);
+    for u in &updates {
+        let cache_path = cache.git_dir().join(&u.name);
         if cache_path.exists() {
             let _ = fs::remove_dir_all(&cache_path);
         }
@@ -833,18 +728,40 @@ pub async fn update(package: Option<&str>, breaking: bool) -> Result<()> {
     let _ = fs::remove_file(&lockfile_path);
 
     println!();
-    println!(
-        "{} Updated {} package(s)",
-        style("✓").green().bold(),
-        updates.len()
-    );
-    println!(
-        "\n{} Run {} to install the updates",
-        style("→").dim(),
-        style("gust install").cyan()
-    );
+    ui::success(format!("Updated {} package(s)", updates.len()));
+    ui::hint(format!("Run {} to install the updates", pkg("gust install")));
 
     Ok(())
+}
+
+/// Update a tag in the manifest content for a given package.
+fn update_manifest_tag(content: &mut String, name: &str, new_tag: &str) {
+    let patterns = [
+        format!("{} = {{ git =", name),
+        format!("{} = {{git =", name),
+    ];
+
+    for pattern in &patterns {
+        if let Some(start_idx) = content.find(pattern) {
+            let line_start = content[..start_idx].rfind('\n').map_or(0, |i| i + 1);
+            let line_end = content[start_idx..].find('\n').map_or(content.len(), |i| start_idx + i);
+            let line = &content[line_start..line_end];
+
+            if let Some(tag_start) = line.find("tag = \"") {
+                let tag_value_start = tag_start + 7;
+                if let Some(tag_end) = line[tag_value_start..].find('"') {
+                    let old_line = line.to_string();
+                    let new_line = format!(
+                        "{}{}{}",
+                        &line[..tag_value_start],
+                        new_tag,
+                        &line[tag_value_start + tag_end..]
+                    );
+                    *content = content.replace(&old_line, &new_line);
+                }
+            }
+        }
+    }
 }
 
 /// Show dependency tree.
@@ -866,15 +783,6 @@ pub async fn tree(_depth: Option<usize>, _duplicates: bool) -> Result<()> {
     Ok(())
 }
 
-/// Information about an outdated dependency.
-#[derive(Debug)]
-pub struct OutdatedInfo {
-    pub name: String,
-    pub current: String,
-    pub latest: String,
-    pub latest_tag: String,
-}
-
 /// Show outdated dependencies.
 pub async fn outdated() -> Result<()> {
     let cwd = env::current_dir().into_diagnostic()?;
@@ -886,78 +794,20 @@ pub async fn outdated() -> Result<()> {
         ));
     }
 
-    println!(
-        "{} Checking for outdated dependencies...",
-        style("→").blue().bold()
-    );
+    ui::info("Checking for outdated dependencies...");
 
     let lockfile = gust_lockfile::Lockfile::load(&lockfile_path).into_diagnostic()?;
 
     if lockfile.packages.is_empty() {
-        println!("{} No dependencies to check", style("✓").green().bold());
+        ui::success("No dependencies to check");
         return Ok(());
     }
 
-    // Check each git dependency for newer tags in parallel
-    let mut tasks = Vec::new();
-
-    for pkg in &lockfile.packages {
-        if let Some(ref git_url) = pkg.git {
-            let name = pkg.name.clone();
-            let current_version = pkg.version.to_string();
-            let url = git_url.clone();
-
-            tasks.push(tokio::spawn(async move {
-                match gust_fetch::list_remote_tags(&url).await {
-                    Ok(tags) => {
-                        // Find the latest semver tag
-                        if let Some(latest) = tags.iter().find(|t| t.version.is_some()) {
-                            let latest_version = latest.version.as_ref().unwrap();
-                            let current = semver::Version::parse(&current_version).ok();
-
-                            if let Some(ref curr) = current {
-                                if latest_version > curr {
-                                    return Some(OutdatedInfo {
-                                        name,
-                                        current: current_version,
-                                        latest: latest_version.to_string(),
-                                        latest_tag: latest.name.clone(),
-                                    });
-                                }
-                            } else {
-                                // Current version isn't semver, show latest anyway
-                                return Some(OutdatedInfo {
-                                    name,
-                                    current: current_version,
-                                    latest: latest_version.to_string(),
-                                    latest_tag: latest.name.clone(),
-                                });
-                            }
-                        }
-                        None
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to check {} for updates: {}", name, e);
-                        None
-                    }
-                }
-            }));
-        }
-    }
-
-    // Collect results
-    let mut outdated_deps = Vec::new();
-    for task in tasks {
-        if let Ok(Some(info)) = task.await {
-            outdated_deps.push(info);
-        }
-    }
+    let packages: Vec<_> = lockfile.packages.iter().collect();
+    let outdated_deps = check_all_for_updates(&packages).await;
 
     if outdated_deps.is_empty() {
-        println!(
-            "{} All dependencies are up to date",
-            style("✓").green().bold()
-        );
+        ui::success("All dependencies are up to date");
     } else {
         println!();
         println!(
@@ -966,27 +816,20 @@ pub async fn outdated() -> Result<()> {
             style("Current").bold(),
             style("Latest").bold()
         );
-        println!("{}", style("─".repeat(60)).dim());
+        separator(60);
 
         for dep in &outdated_deps {
             println!(
                 "{:<30} {:<15} {}",
-                style(&dep.name).cyan(),
-                style(&dep.current).dim(),
-                style(&dep.latest).green()
+                pkg(&dep.name),
+                dim(&dep.current),
+                green(&dep.latest)
             );
         }
 
         println!();
-        println!(
-            "{} {} package(s) can be updated",
-            style("→").yellow(),
-            outdated_deps.len()
-        );
-        println!(
-            "  Run {} to update all",
-            style("gust update").cyan()
-        );
+        ui::warn(format!("{} package(s) can be updated", outdated_deps.len()));
+        println!("  Run {} to update all", pkg("gust update"));
     }
 
     Ok(())
