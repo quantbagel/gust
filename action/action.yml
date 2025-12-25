@@ -1,0 +1,101 @@
+name: 'Setup Gust'
+description: 'Install Gust - A blazing fast Swift package manager'
+author: 'quantbagel'
+
+branding:
+  icon: 'package'
+  color: 'orange'
+
+inputs:
+  version:
+    description: 'Gust version to install (e.g., "0.1.0" or "latest")'
+    required: false
+    default: 'latest'
+  github-token:
+    description: 'GitHub token for API requests (to avoid rate limiting)'
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  version:
+    description: 'The installed Gust version'
+    value: ${{ steps.install.outputs.version }}
+  cache-hit:
+    description: 'Whether gust was restored from cache'
+    value: ${{ steps.cache.outputs.cache-hit }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Determine platform
+      id: platform
+      shell: bash
+      run: |
+        case "${{ runner.os }}-${{ runner.arch }}" in
+          Linux-X64)
+            echo "target=x86_64-unknown-linux-gnu" >> $GITHUB_OUTPUT
+            ;;
+          macOS-X64)
+            echo "target=x86_64-apple-darwin" >> $GITHUB_OUTPUT
+            ;;
+          macOS-ARM64)
+            echo "target=aarch64-apple-darwin" >> $GITHUB_OUTPUT
+            ;;
+          *)
+            echo "::error::Unsupported platform: ${{ runner.os }}-${{ runner.arch }}"
+            exit 1
+            ;;
+        esac
+
+    - name: Determine version
+      id: version
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+      run: |
+        if [ "${{ inputs.version }}" = "latest" ]; then
+          VERSION=$(curl -s https://api.github.com/repos/quantbagel/gust/releases/latest | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/')
+          if [ -z "$VERSION" ]; then
+            echo "::error::Failed to determine latest version"
+            exit 1
+          fi
+        else
+          VERSION="${{ inputs.version }}"
+        fi
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Installing Gust v$VERSION"
+
+    - name: Cache Gust
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.gust/bin
+        key: gust-${{ steps.platform.outputs.target }}-${{ steps.version.outputs.version }}
+
+    - name: Download and install Gust
+      id: install
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        VERSION="${{ steps.version.outputs.version }}"
+        TARGET="${{ steps.platform.outputs.target }}"
+
+        mkdir -p ~/.gust/bin
+
+        DOWNLOAD_URL="https://github.com/quantbagel/gust/releases/download/v${VERSION}/gust-${TARGET}.tar.gz"
+        echo "Downloading from: $DOWNLOAD_URL"
+
+        curl -fsSL "$DOWNLOAD_URL" | tar xz -C ~/.gust/bin
+        chmod +x ~/.gust/bin/gust
+
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+    - name: Add to PATH
+      shell: bash
+      run: |
+        echo "$HOME/.gust/bin" >> $GITHUB_PATH
+
+    - name: Verify installation
+      shell: bash
+      run: |
+        ~/.gust/bin/gust --version

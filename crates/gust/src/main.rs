@@ -6,6 +6,7 @@ use std::path::PathBuf;
 
 mod commands;
 mod install;
+mod package_index;
 
 #[derive(Parser)]
 #[command(name = "gust")]

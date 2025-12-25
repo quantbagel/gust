@@ -1073,25 +1073,61 @@ pub async fn info(package: &str) -> Result<()> {
 
 /// Search for packages.
 pub async fn search(query: &str, limit: usize) -> Result<()> {
+    use crate::package_index;
+
     println!(
-        "{} Searching for '{}'...",
+        "{} Searching Swift Package Index for '{}'...",
         style("→").blue().bold(),
         style(query).cyan()
     );
 
-    // Search in known packages first
-    let query_lower = query.to_lowercase();
-    let matches: Vec<(&str, &str)> = KNOWN_ORGS
-        .iter()
-        .filter(|(name, _)| name.to_lowercase().contains(&query_lower))
-        .map(|(name, org)| (*name, *org))
-        .collect();
+    // Try to get package count for context
+    let count_info = match package_index::package_count().await {
+        Ok(count) => format!(" ({} packages indexed)", count),
+        Err(_) => String::new(),
+    };
+
+    // Search in Swift Package Index
+    let matches = match package_index::search_packages(query, limit * 2).await {
+        Ok(m) => m,
+        Err(e) => {
+            // Fall back to known packages if index fetch fails
+            println!(
+                "{} Could not fetch package index: {}",
+                style("!").yellow(),
+                e
+            );
+            println!("{} Searching local cache...\n", style("→").blue().bold());
+
+            let query_lower = query.to_lowercase();
+            let local_matches: Vec<_> = KNOWN_ORGS
+                .iter()
+                .filter(|(name, _)| name.to_lowercase().contains(&query_lower))
+                .map(|(name, org)| crate::package_index::IndexedPackage {
+                    name: name.to_string(),
+                    owner: org.to_string(),
+                    url: format!("https://github.com/{}/{}.git", org, name),
+                })
+                .collect();
+
+            if local_matches.is_empty() {
+                println!(
+                    "{} No packages found matching '{}'",
+                    style("!").yellow(),
+                    query
+                );
+                return Ok(());
+            }
+            local_matches
+        }
+    };
 
     if matches.is_empty() {
         println!(
-            "\n{} No packages found matching '{}'",
+            "\n{} No packages found matching '{}'{}",
             style("!").yellow(),
-            query
+            query,
+            count_info
         );
         println!("\n{}", style("Try:").bold());
         println!("  gust add <org>/<repo>           # Add from GitHub");
@@ -1100,19 +1136,23 @@ pub async fn search(query: &str, limit: usize) -> Result<()> {
     }
 
     println!(
-        "\n{} Found {} matching packages:\n",
+        "\n{} Found {} matching packages{}:\n",
         style("✓").green(),
-        matches.len().min(limit)
+        matches.len().min(limit),
+        count_info
     );
 
-    for (name, org) in matches.iter().take(limit) {
+    for pkg in matches.iter().take(limit) {
         println!(
             "  {} {}/{}",
             style("•").dim(),
-            style(org).dim(),
-            style(name).cyan().bold()
+            style(&pkg.owner).dim(),
+            style(&pkg.name).cyan().bold()
         );
-        println!("    {}", style(format!("gust add {}/{}", org, name)).dim());
+        println!(
+            "    {}",
+            style(format!("gust add {}/{}", pkg.owner, pkg.name)).dim()
+        );
     }
 
     if matches.len() > limit {

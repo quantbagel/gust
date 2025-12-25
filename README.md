@@ -21,19 +21,36 @@ A blazing fast Swift package manager, written in Rust.
 
 ## Installation
 
+### Quick install (macOS/Linux)
+
+```console
+$ curl -fsSL https://raw.githubusercontent.com/quantbagel/gust/main/install.sh | bash
+```
+
+### Homebrew
+
+```console
+$ brew tap quantbagel/tap
+$ brew install gust
+```
+
+### GitHub Actions
+
+```yaml
+- uses: quantbagel/gust/action@v0.1.0
+```
+
 ### From source (requires Rust)
 
 ```console
-$ git clone https://github.com/user/gust.git
+$ git clone https://github.com/quantbagel/gust.git
 $ cd gust
 $ cargo install --path crates/gust
 ```
 
-### Homebrew (coming soon)
+### Download binary
 
-```console
-$ brew install gust
-```
+Download from [GitHub Releases](https://github.com/quantbagel/gust/releases).
 
 ## Quick Start
 
@@ -103,6 +120,7 @@ $ gust migrate
 | `gust test` | Run tests |
 | `gust clean` | Clean build artifacts |
 | `gust tree` | Show dependency tree |
+| `gust search <query>` | Search 10,000+ Swift packages |
 | `gust cache stats` | Show cache statistics |
 
 ## Gust.toml Format
