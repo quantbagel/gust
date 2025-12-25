@@ -127,10 +127,12 @@ mod tests {
     use gust_types::{Dependency, Package, Version, VersionReq, WorkspaceConfig};
 
     fn create_test_workspace() -> Workspace {
-        let mut core_manifest = Manifest::default();
-        core_manifest.package = Package {
-            name: "core".to_string(),
-            version: Version::new(0, 1, 0),
+        let mut core_manifest = Manifest {
+            package: Package {
+                name: "core".to_string(),
+                version: Version::new(0, 1, 0),
+                ..Default::default()
+            },
             ..Default::default()
         };
         core_manifest.dependencies.insert(
@@ -138,10 +140,12 @@ mod tests {
             Dependency::registry("swift-log", VersionReq::parse("^1.4").unwrap()),
         );
 
-        let mut cli_manifest = Manifest::default();
-        cli_manifest.package = Package {
-            name: "cli".to_string(),
-            version: Version::new(0, 1, 0),
+        let mut cli_manifest = Manifest {
+            package: Package {
+                name: "cli".to_string(),
+                version: Version::new(0, 1, 0),
+                ..Default::default()
+            },
             ..Default::default()
         };
         cli_manifest.dependencies.insert(
