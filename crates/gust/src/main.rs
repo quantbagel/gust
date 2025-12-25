@@ -9,6 +9,7 @@ use std::path::PathBuf;
 mod commands;
 mod install;
 mod package_index;
+mod update_checker;
 
 #[derive(Parser)]
 #[command(name = "gust")]
@@ -207,6 +208,13 @@ enum Commands {
     /// Check environment and diagnose issues
     Doctor,
 
+    /// Manage gust itself
+    #[command(name = "self")]
+    SelfCmd {
+        #[command(subcommand)]
+        action: SelfAction,
+    },
+
     /// Generate shell completions
     #[command(hide = true)]
     Completions {
@@ -217,6 +225,12 @@ enum Commands {
     /// Generate man page
     #[command(hide = true)]
     Manpage,
+}
+
+#[derive(Subcommand)]
+enum SelfAction {
+    /// Update gust to the latest version
+    Update,
 }
 
 #[derive(Subcommand)]
@@ -371,15 +385,28 @@ async fn main() -> Result<()> {
         Commands::Doctor => {
             commands::doctor().await?;
         }
+        Commands::SelfCmd { action } => match action {
+            SelfAction::Update => {
+                update_checker::self_update().await?;
+                return Ok(()); // Skip update check after self-update
+            }
+        },
         Commands::Completions { shell } => {
             clap_complete::generate(shell, &mut Cli::command(), "gust", &mut io::stdout());
+            return Ok(()); // Skip update check for completions
         }
         Commands::Manpage => {
             let cmd = Cli::command();
             let man = clap_mangen::Man::new(cmd);
             man.render(&mut io::stdout())
                 .expect("failed to write man page");
+            return Ok(()); // Skip update check for manpage
         }
+    }
+
+    // Check for updates in the background (non-blocking, cached)
+    if !cli.global.quiet {
+        update_checker::check_and_notify().await;
     }
 
     Ok(())

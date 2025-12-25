@@ -193,6 +193,16 @@ Note: Package.swift is auto-generated when you run `gust build` or `gust install
 - Debugging the generated manifest
 - Projects that need to commit Package.swift
 
+### `gust self update`
+
+Update gust to the latest version.
+
+```sh
+gust self update
+```
+
+Gust automatically checks for updates once per day and shows a notification if a new version is available. Use this command to install the update.
+
 ## Global Options
 
 These options work with any command:
