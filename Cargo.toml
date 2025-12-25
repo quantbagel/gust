@@ -18,7 +18,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.5"
+version = "0.2.6"
 edition = "2021"
 license = "Apache-2.0"
 repository = "https://github.com/quantbagel/gust"
@@ -35,8 +35,8 @@ clap_mangen = "0.2"
 tokio = { version = "1.35", features = ["full"] }
 futures = "0.3"
 
-# HTTP
-reqwest = { version = "0.12", features = ["json", "gzip", "brotli", "stream"] }
+# HTTP - using rustls for cross-compilation (no OpenSSL dependency)
+reqwest = { version = "0.12", default-features = false, features = ["json", "gzip", "brotli", "stream", "rustls-tls"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
