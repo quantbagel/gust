@@ -239,6 +239,9 @@ pub struct Manifest {
     /// Build targets
     #[serde(default)]
     pub targets: Vec<Target>,
+    /// Platform requirements (e.g., macOS 12.0, iOS 15.0)
+    #[serde(default)]
+    pub platforms: HashMap<String, String>,
     /// Binary cache configuration
     #[serde(default)]
     pub binary_cache: Option<BinaryCacheConfig>,

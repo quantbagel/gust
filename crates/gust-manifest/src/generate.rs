@@ -22,7 +22,7 @@ pub fn generate_package_swift(manifest: &Manifest) -> String {
     out.push_str(&format!("    name: \"{}\",\n", manifest.package.name));
 
     // Platforms (if specified)
-    // TODO: Add platform support to manifest
+    generate_platforms(&mut out, manifest);
 
     // Products
     generate_products(&mut out, manifest);
@@ -35,6 +35,44 @@ pub fn generate_package_swift(manifest: &Manifest) -> String {
 
     out.push_str(")\n");
     out
+}
+
+fn generate_platforms(out: &mut String, manifest: &Manifest) {
+    if manifest.platforms.is_empty() {
+        return;
+    }
+
+    out.push_str("    platforms: [\n");
+
+    // Sort platforms for consistent output
+    let mut platforms: Vec<_> = manifest.platforms.iter().collect();
+    platforms.sort_by_key(|(k, _)| *k);
+
+    for (platform, version) in platforms {
+        let swift_platform = match platform.to_lowercase().as_str() {
+            "macos" => ".macOS",
+            "ios" => ".iOS",
+            "tvos" => ".tvOS",
+            "watchos" => ".watchOS",
+            "visionos" => ".visionOS",
+            "linux" => continue, // Linux doesn't have version requirements in Package.swift
+            other => {
+                // Try to use the platform name as-is with proper casing
+                out.push_str(&format!(
+                    "        // Unsupported platform: {} {}\n",
+                    other, version
+                ));
+                continue;
+            }
+        };
+        out.push_str(&format!(
+            "        {}(.v{}),\n",
+            swift_platform,
+            version.replace('.', "_")
+        ));
+    }
+
+    out.push_str("    ],\n");
 }
 
 fn generate_products(out: &mut String, manifest: &Manifest) {
@@ -324,5 +362,27 @@ mod tests {
         let output = generate_package_swift(&manifest);
         assert!(output.contains("swift-log.git"));
         assert!(output.contains("from: \"1.5.0\""));
+    }
+
+    #[test]
+    fn test_generate_with_platforms() {
+        let mut manifest = Manifest {
+            package: Package {
+                name: "MyApp".to_string(),
+                version: Version::new(1, 0, 0),
+                swift_tools_version: "5.9".to_string(),
+                ..Default::default()
+            },
+            targets: vec![Target::library("MyApp")],
+            ..Default::default()
+        };
+
+        manifest.platforms.insert("iOS".to_string(), "15.0".to_string());
+        manifest.platforms.insert("macOS".to_string(), "12.0".to_string());
+
+        let output = generate_package_swift(&manifest);
+        assert!(output.contains("platforms: ["));
+        assert!(output.contains(".iOS(.v15_0)"));
+        assert!(output.contains(".macOS(.v12_0)"));
     }
 }

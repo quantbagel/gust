@@ -1576,7 +1576,7 @@ dependencies = [
 
 [[package]]
 name = "gust"
-version = "0.2.5"
+version = "0.2.7"
 dependencies = [
  "clap",
  "clap_complete",
@@ -1610,7 +1610,7 @@ dependencies = [
 
 [[package]]
 name = "gust-binary-cache"
-version = "0.2.5"
+version = "0.2.7"
 dependencies = [
  "blake3",
  "directories",
@@ -1631,7 +1631,7 @@ dependencies = [
 
 [[package]]
 name = "gust-build"
-version = "0.2.5"
+version = "0.2.7"
 dependencies = [
  "blake3",
  "gust-binary-cache",
@@ -1645,7 +1645,7 @@ dependencies = [
 
 [[package]]
 name = "gust-cache"
-version = "0.2.5"
+version = "0.2.7"
 dependencies = [
  "blake3",
  "directories",
@@ -1660,7 +1660,7 @@ dependencies = [
 
 [[package]]
 name = "gust-diagnostics"
-version = "0.2.5"
+version = "0.2.7"
 dependencies = [
  "console",
  "miette",
@@ -1669,7 +1669,7 @@ dependencies = [
 
 [[package]]
 name = "gust-fetch"
-version = "0.2.5"
+version = "0.2.7"
 dependencies = [
  "blake3",
  "futures",
@@ -1688,7 +1688,7 @@ dependencies = [
 
 [[package]]
 name = "gust-lockfile"
-version = "0.2.5"
+version = "0.2.7"
 dependencies = [
  "gust-types",
  "serde",
@@ -1700,7 +1700,7 @@ dependencies = [
 
 [[package]]
 name = "gust-manifest"
-version = "0.2.5"
+version = "0.2.7"
 dependencies = [
  "blake3",
  "directories",
@@ -1716,7 +1716,7 @@ dependencies = [
 
 [[package]]
 name = "gust-platform"
-version = "0.2.5"
+version = "0.2.7"
 dependencies = [
  "serde",
  "thiserror 1.0.69",
@@ -1725,7 +1725,7 @@ dependencies = [
 
 [[package]]
 name = "gust-plugin"
-version = "0.2.5"
+version = "0.2.7"
 dependencies = [
  "futures",
  "gust-cache",
@@ -1742,7 +1742,7 @@ dependencies = [
 
 [[package]]
 name = "gust-registry"
-version = "0.2.5"
+version = "0.2.7"
 dependencies = [
  "gust-types",
  "reqwest",
@@ -1756,7 +1756,7 @@ dependencies = [
 
 [[package]]
 name = "gust-resolver"
-version = "0.2.5"
+version = "0.2.7"
 dependencies = [
  "gust-types",
  "pubgrub",
@@ -1766,7 +1766,7 @@ dependencies = [
 
 [[package]]
 name = "gust-types"
-version = "0.2.5"
+version = "0.2.7"
 dependencies = [
  "semver",
  "serde",
@@ -1775,7 +1775,7 @@ dependencies = [
 
 [[package]]
 name = "gust-workspace"
-version = "0.2.5"
+version = "0.2.7"
 dependencies = [
  "futures",
  "glob",

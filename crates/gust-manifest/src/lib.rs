@@ -80,6 +80,9 @@ struct RawGustToml {
     /// Workspace configuration (if this is a workspace root)
     #[serde(default)]
     workspace: Option<RawWorkspace>,
+    /// Platform requirements (e.g., macOS = "12.0", iOS = "15.0")
+    #[serde(default)]
+    platforms: HashMap<String, String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -266,6 +269,7 @@ pub fn parse_gust_toml(path: &Path) -> Result<Manifest, ManifestError> {
         dependencies,
         dev_dependencies,
         targets,
+        platforms: raw.platforms,
         binary_cache: raw.binary_cache,
         build: raw.build,
         overrides: raw.overrides,
@@ -448,6 +452,7 @@ fn convert_spm_json(json: serde_json::Value) -> Result<Manifest, ManifestError> 
         dependencies,
         dev_dependencies: HashMap::new(),
         targets,
+        platforms: HashMap::new(),
         binary_cache: None,
         build: None,
         overrides: HashMap::new(),
@@ -736,5 +741,23 @@ license = "MIT"
             .expect("package defaults should be present");
         assert_eq!(defaults.swift_tools_version, Some("5.9".to_string()));
         assert_eq!(defaults.license, Some("MIT".to_string()));
+    }
+
+    #[test]
+    fn test_parse_platforms() {
+        let toml = r#"
+[package]
+name = "MyApp"
+version = "1.0.0"
+
+[platforms]
+macOS = "12.0"
+iOS = "15.0"
+tvOS = "15.0"
+"#;
+        let raw: RawGustToml = toml::from_str(toml).unwrap();
+        assert_eq!(raw.platforms.get("macOS"), Some(&"12.0".to_string()));
+        assert_eq!(raw.platforms.get("iOS"), Some(&"15.0".to_string()));
+        assert_eq!(raw.platforms.get("tvOS"), Some(&"15.0".to_string()));
     }
 }

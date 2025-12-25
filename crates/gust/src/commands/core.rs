@@ -234,6 +234,9 @@ pub async fn build(
     target: Option<&str>,
     jobs: Option<usize>,
     no_cache: bool,
+    platform: Option<&str>,
+    sdk: Option<&str>,
+    arch: Option<&str>,
 ) -> Result<()> {
     let cwd = env::current_dir().into_diagnostic()?;
     let (manifest, manifest_type) = find_manifest(&cwd).into_diagnostic()?;
@@ -241,6 +244,22 @@ pub async fn build(
     // Auto-generate Package.swift from Gust.toml if needed
     if manifest_type == ManifestType::GustToml {
         write_package_swift(&manifest, &cwd).into_diagnostic()?;
+    }
+
+    // Determine if we need xcodebuild for cross-platform builds
+    let needs_xcodebuild = platform.is_some() || sdk.is_some();
+
+    if needs_xcodebuild {
+        return build_with_xcodebuild(
+            &cwd,
+            &manifest,
+            release,
+            target,
+            platform,
+            sdk,
+            arch,
+        )
+        .await;
     }
 
     let builder = Builder::new(cwd).into_diagnostic()?;
@@ -295,10 +314,98 @@ pub async fn build(
     Ok(())
 }
 
+/// Build using xcodebuild for cross-platform targets (iOS, tvOS, watchOS, etc.)
+async fn build_with_xcodebuild(
+    cwd: &std::path::Path,
+    manifest: &Manifest,
+    release: bool,
+    target: Option<&str>,
+    platform: Option<&str>,
+    sdk: Option<&str>,
+    arch: Option<&str>,
+) -> Result<()> {
+    // Resolve SDK from platform if not explicitly provided
+    let resolved_sdk = sdk
+        .map(String::from)
+        .or_else(|| {
+            platform.map(|p| match p.to_lowercase().as_str() {
+                "ios" => "iphoneos".to_string(),
+                "ios-simulator" | "iossimulator" => "iphonesimulator".to_string(),
+                "tvos" => "appletvos".to_string(),
+                "tvos-simulator" | "tvossimulator" => "appletvsimulator".to_string(),
+                "watchos" => "watchos".to_string(),
+                "watchos-simulator" | "watchossimulator" => "watchsimulator".to_string(),
+                "visionos" => "xros".to_string(),
+                "visionos-simulator" | "visionossimulator" => "xrsimulator".to_string(),
+                "macos" | "macosx" => "macosx".to_string(),
+                _ => p.to_string(),
+            })
+        })
+        .unwrap_or_else(|| "macosx".to_string());
+
+    let configuration = if release { "release" } else { "debug" };
+
+    println!(
+        "{} Building {} for {} ({})",
+        style("→").blue().bold(),
+        style(&manifest.package.name).cyan(),
+        style(&resolved_sdk).yellow(),
+        configuration
+    );
+
+    let start = std::time::Instant::now();
+
+    // Build xcodebuild command
+    let mut cmd = Command::new("xcodebuild");
+    cmd.arg("build");
+    cmd.arg("-scheme").arg(&manifest.package.name);
+    cmd.arg("-sdk").arg(&resolved_sdk);
+    cmd.arg("-configuration")
+        .arg(if release { "Release" } else { "Debug" });
+
+    // Add architecture if specified
+    if let Some(a) = arch {
+        cmd.arg(format!("ARCHS={}", a));
+        cmd.arg(format!("ONLY_ACTIVE_ARCH=NO"));
+    }
+
+    // Specify build target if provided
+    if let Some(t) = target {
+        cmd.arg("-target").arg(t);
+    }
+
+    // Build for library
+    cmd.arg("BUILD_LIBRARY_FOR_DISTRIBUTION=YES");
+
+    cmd.current_dir(cwd);
+    cmd.stdout(std::process::Stdio::inherit());
+    cmd.stderr(std::process::Stdio::inherit());
+
+    let status = cmd.status().into_diagnostic()?;
+
+    let duration = start.elapsed().as_secs_f64();
+
+    if status.success() {
+        println!(
+            "{} Built for {} in {:.2}s",
+            style("✓").green().bold(),
+            style(&resolved_sdk).yellow(),
+            duration
+        );
+        Ok(())
+    } else {
+        Err(miette::miette!(
+            "xcodebuild failed. Make sure you have Xcode installed and the package \
+             is configured correctly for {}.",
+            resolved_sdk
+        ))
+    }
+}
+
 /// Run the executable.
 pub async fn run(target: Option<&str>, args: &[String]) -> Result<()> {
-    // First build (with cache)
-    build(false, target, None, false).await?;
+    // First build (with cache) - run uses default macOS build
+    build(false, target, None, false, None, None, None).await?;
 
     let cwd = env::current_dir().into_diagnostic()?;
     let (manifest, _) = find_manifest(&cwd).into_diagnostic()?;
@@ -1377,133 +1484,60 @@ pub async fn swift_use(version: &str, global: bool) -> Result<()> {
     Ok(())
 }
 
-/// Generate Xcode project.
+/// Open package in Xcode.
+///
+/// Modern Xcode (11+) can open Package.swift files directly without generating
+/// a .xcodeproj file. This is the recommended approach as generate-xcodeproj
+/// was deprecated and removed in Swift 5.6+.
 pub async fn xcode_generate(open: bool) -> Result<()> {
     let cwd = env::current_dir().into_diagnostic()?;
     let (manifest, manifest_type) = find_manifest(&cwd).into_diagnostic()?;
 
+    // Ensure Package.swift exists
+    let package_path = cwd.join("Package.swift");
+    if manifest_type == ManifestType::GustToml {
+        println!(
+            "{} Generating Package.swift from Gust.toml",
+            style("→").blue().bold()
+        );
+        write_package_swift(&manifest, &cwd).into_diagnostic()?;
+    }
+
+    if !package_path.exists() {
+        return Err(miette::miette!(
+            "No Package.swift found. Run 'gust generate' first."
+        ));
+    }
+
     println!(
-        "{} Generating Xcode project for {}",
-        style("→").blue().bold(),
+        "{} Package {} is ready for Xcode",
+        style("✓").green().bold(),
         style(&manifest.package.name).cyan()
     );
 
-    // Use swift package generate-xcodeproj
-    let status = Command::new("swift")
-        .args(["package", "generate-xcodeproj"])
-        .current_dir(&cwd)
-        .status()
-        .into_diagnostic()?;
-
-    if !status.success() {
-        // If no Package.swift exists, create a temporary one
-        if manifest_type == gust_manifest::ManifestType::GustToml {
-            println!("  {} Creating temporary Package.swift", style("→").dim());
-
-            let package_swift = generate_package_swift(&manifest);
-            let package_path = cwd.join("Package.swift");
-            fs::write(&package_path, &package_swift).into_diagnostic()?;
-
-            let status = Command::new("swift")
-                .args(["package", "generate-xcodeproj"])
-                .current_dir(&cwd)
-                .status()
-                .into_diagnostic()?;
-
-            // Clean up temporary Package.swift
-            let _ = fs::remove_file(&package_path);
-
-            if !status.success() {
-                return Err(miette::miette!("Failed to generate Xcode project"));
-            }
-        } else {
-            return Err(miette::miette!("Failed to generate Xcode project"));
-        }
-    }
-
-    let xcodeproj = cwd.join(format!("{}.xcodeproj", manifest.package.name));
-
     println!(
-        "{} Created {}",
-        style("✓").green().bold(),
-        xcodeproj.display()
+        "  {} Xcode can open Package.swift directly (no .xcodeproj needed)",
+        style("ℹ").blue()
     );
 
     if open {
         println!("{} Opening in Xcode...", style("→").blue());
+        // Open the Package.swift directly - Xcode will handle it
         Command::new("open")
-            .arg(&xcodeproj)
+            .arg("-a")
+            .arg("Xcode")
+            .arg(&package_path)
             .status()
             .into_diagnostic()?;
+    } else {
+        println!(
+            "  {} Run 'open -a Xcode {}' or use --open flag",
+            style("→").dim(),
+            package_path.display()
+        );
     }
 
     Ok(())
-}
-
-/// Generate a Package.swift from a Manifest.
-fn generate_package_swift(manifest: &Manifest) -> String {
-    let mut out = String::new();
-
-    out.push_str(&format!(
-        "// swift-tools-version:{}\n",
-        manifest.package.swift_tools_version
-    ));
-    out.push_str("import PackageDescription\n\n");
-    out.push_str("let package = Package(\n");
-    out.push_str(&format!("    name: \"{}\",\n", manifest.package.name));
-
-    // Dependencies
-    if !manifest.dependencies.is_empty() {
-        out.push_str("    dependencies: [\n");
-        for dep in manifest.dependencies.values() {
-            if let Some(git) = &dep.git {
-                if let Some(tag) = &dep.tag {
-                    out.push_str(&format!(
-                        "        .package(url: \"{}\", from: \"{}\"),\n",
-                        git, tag
-                    ));
-                } else if let Some(branch) = &dep.branch {
-                    out.push_str(&format!(
-                        "        .package(url: \"{}\", branch: \"{}\"),\n",
-                        git, branch
-                    ));
-                } else {
-                    out.push_str(&format!(
-                        "        .package(url: \"{}\", branch: \"main\"),\n",
-                        git
-                    ));
-                }
-            }
-        }
-        out.push_str("    ],\n");
-    }
-
-    // Targets
-    out.push_str("    targets: [\n");
-    for target in &manifest.targets {
-        match target.target_type {
-            TargetType::Executable => {
-                out.push_str(&format!(
-                    "        .executableTarget(name: \"{}\"),\n",
-                    target.name
-                ));
-            }
-            TargetType::Library => {
-                out.push_str(&format!("        .target(name: \"{}\"),\n", target.name));
-            }
-            TargetType::Test => {
-                out.push_str(&format!(
-                    "        .testTarget(name: \"{}\"),\n",
-                    target.name
-                ));
-            }
-            _ => {}
-        }
-    }
-    out.push_str("    ]\n");
-    out.push_str(")\n");
-
-    out
 }
 
 /// Check environment and diagnose issues.
