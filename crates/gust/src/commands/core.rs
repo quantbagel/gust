@@ -6,7 +6,7 @@ use crate::install::{InstallOptions, Installer};
 use console::style;
 use gust_build::{BuildOptions, Builder};
 use gust_cache::GlobalCache;
-use gust_manifest::{find_manifest, generate_gust_toml};
+use gust_manifest::{find_manifest, generate_gust_toml, write_package_swift, ManifestType};
 use gust_types::{BuildConfiguration, Manifest, Package, Target, TargetType, Version};
 use miette::{IntoDiagnostic, Result};
 use std::env;
@@ -103,7 +103,7 @@ final class {}Tests: XCTestCase {{
 *.xcodeproj
 *.xcworkspace
 DerivedData/
-Gust.lock
+Package.swift
 "#;
     fs::write(path.join(".gitignore"), gitignore).into_diagnostic()?;
 
@@ -236,7 +236,12 @@ pub async fn build(
     no_cache: bool,
 ) -> Result<()> {
     let cwd = env::current_dir().into_diagnostic()?;
-    let (manifest, _) = find_manifest(&cwd).into_diagnostic()?;
+    let (manifest, manifest_type) = find_manifest(&cwd).into_diagnostic()?;
+
+    // Auto-generate Package.swift from Gust.toml if needed
+    if manifest_type == ManifestType::GustToml {
+        write_package_swift(&manifest, &cwd).into_diagnostic()?;
+    }
 
     let builder = Builder::new(cwd).into_diagnostic()?;
 
@@ -629,8 +634,14 @@ pub async fn install(frozen: bool) -> Result<()> {
         concurrency,
     };
 
-    let installer = Installer::new(cwd, options)?;
+    let installer = Installer::new(cwd.clone(), options)?;
     let result = installer.install().await?;
+
+    // Auto-generate Package.swift from Gust.toml
+    let (manifest, manifest_type) = find_manifest(&cwd).into_diagnostic()?;
+    if manifest_type == ManifestType::GustToml {
+        write_package_swift(&manifest, &cwd).into_diagnostic()?;
+    }
 
     println!(
         "\n{} Installed {} packages",
@@ -1049,6 +1060,30 @@ pub async fn migrate() -> Result<()> {
         style("✓").green().bold(),
         gust_toml.display()
     );
+
+    Ok(())
+}
+
+/// Generate Package.swift from Gust.toml.
+pub async fn generate() -> Result<()> {
+    let cwd = env::current_dir().into_diagnostic()?;
+    let gust_toml = cwd.join("Gust.toml");
+
+    if !gust_toml.exists() {
+        return Err(miette::miette!(
+            "Gust.toml not found. Run 'gust init' or 'gust migrate' first."
+        ));
+    }
+
+    println!(
+        "{} Generating Package.swift from Gust.toml",
+        style("→").blue().bold()
+    );
+
+    let (manifest, _) = find_manifest(&cwd).into_diagnostic()?;
+    write_package_swift(&manifest, &cwd).into_diagnostic()?;
+
+    println!("{} Generated Package.swift", style("✓").green().bold());
 
     Ok(())
 }

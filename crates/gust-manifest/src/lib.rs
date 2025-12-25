@@ -1,10 +1,13 @@
 //! Manifest parsing for Gust.
 //!
-//! Supports both Gust.toml and Package.swift formats.
+//! Supports both Gust.toml and Package.swift formats,
+//! and can generate Package.swift from Gust.toml.
 
 mod cache;
+mod generate;
 
 pub use cache::{CacheStats, ManifestCache};
+pub use generate::{generate_package_swift, write_package_swift};
 use gust_types::{
     BinaryCacheConfig, BuildSettings, Dependency, Manifest, Package, Target, TargetType, Version,
     VersionReq, WorkspaceConfig, WorkspacePackageDefaults,

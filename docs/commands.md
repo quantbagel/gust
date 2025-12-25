@@ -180,6 +180,19 @@ Convert Package.swift to Gust.toml.
 gust migrate
 ```
 
+### `gust generate`
+
+Generate Package.swift from Gust.toml.
+
+```sh
+gust generate
+```
+
+Note: Package.swift is auto-generated when you run `gust build` or `gust install`, so you typically don't need to run this manually. It's useful for:
+- Generating Package.swift for IDE support (Xcode, VSCode)
+- Debugging the generated manifest
+- Projects that need to commit Package.swift
+
 ## Global Options
 
 These options work with any command:

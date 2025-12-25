@@ -173,6 +173,9 @@ enum Commands {
     /// Migrate Package.swift to Gust.toml
     Migrate,
 
+    /// Generate Package.swift from Gust.toml
+    Generate,
+
     /// Show package info
     Info {
         /// Package name
@@ -346,6 +349,9 @@ async fn main() -> Result<()> {
         },
         Commands::Migrate => {
             commands::migrate().await?;
+        }
+        Commands::Generate => {
+            commands::generate().await?;
         }
         Commands::Info { package } => {
             commands::info(&package).await?;

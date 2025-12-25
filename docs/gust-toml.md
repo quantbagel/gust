@@ -2,6 +2,8 @@
 
 Gust.toml is a simpler alternative to Package.swift for defining Swift packages.
 
+**Note:** When you use Gust.toml, Package.swift is automatically generated when you run `gust build` or `gust install`. You don't need to maintain both files - just edit Gust.toml and let Gust handle the rest.
+
 ## Basic Example
 
 ```toml
