@@ -112,11 +112,7 @@ impl ConflictDerivation {
         output.push('\n');
 
         for (i, step) in self.steps.iter().enumerate() {
-            output.push_str(&format!(
-                "{}. {}\n",
-                i + 1,
-                step.description
-            ));
+            output.push_str(&format!("{}. {}\n", i + 1, step.description));
             for pkg in &step.packages_involved {
                 output.push_str(&format!("   - {}\n", pkg));
             }
@@ -179,16 +175,10 @@ pub enum ResolutionSuggestion {
     },
 
     /// Add an override to force a version.
-    AddOverride {
-        package: String,
-        version: String,
-    },
+    AddOverride { package: String, version: String },
 
     /// Remove a conflicting constraint.
-    RemoveConstraint {
-        package: String,
-        from: String,
-    },
+    RemoveConstraint { package: String, from: String },
 
     /// Use a different branch/tag.
     ChangeBranch {
@@ -208,7 +198,11 @@ impl fmt::Display for ResolutionSuggestion {
                 write!(f, "Downgrade {} from {} to {}", package, from, to)
             }
             Self::AddOverride { package, version } => {
-                write!(f, "Add override: [overrides]\n{} = \"{}\"", package, version)
+                write!(
+                    f,
+                    "Add override: [overrides]\n{} = \"{}\"",
+                    package, version
+                )
             }
             Self::RemoveConstraint { package, from } => {
                 write!(f, "Remove {} constraint from {}", package, from)
@@ -246,8 +240,7 @@ mod tests {
     fn test_derivation_formatting() {
         let mut derivation = ConflictDerivation::new("Incompatible version requirements");
         derivation.add_step(
-            DerivationStep::new("swift-nio requires swift-log >=1.5")
-                .with_package("swift-log"),
+            DerivationStep::new("swift-nio requires swift-log >=1.5").with_package("swift-log"),
         );
         derivation.format();
         assert!(derivation.formatted.contains("swift-nio requires"));

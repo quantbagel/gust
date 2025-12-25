@@ -728,7 +728,9 @@ license = "MIT"
         assert!(ws.dependencies.contains_key("swift-log"));
         assert!(ws.dependencies.contains_key("swift-nio"));
 
-        let defaults = ws.package_defaults.expect("package defaults should be present");
+        let defaults = ws
+            .package_defaults
+            .expect("package defaults should be present");
         assert_eq!(defaults.swift_tools_version, Some("5.9".to_string()));
         assert_eq!(defaults.license, Some("MIT".to_string()));
     }

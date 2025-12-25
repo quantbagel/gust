@@ -32,8 +32,13 @@ impl LockfileHints {
     }
 
     /// Add a preferred git revision for a package.
-    pub fn add_preferred_revision(&mut self, package: impl Into<String>, revision: impl Into<String>) {
-        self.preferred_revisions.insert(package.into(), revision.into());
+    pub fn add_preferred_revision(
+        &mut self,
+        package: impl Into<String>,
+        revision: impl Into<String>,
+    ) {
+        self.preferred_revisions
+            .insert(package.into(), revision.into());
     }
 
     /// Get the preferred version for a package, if any.
@@ -147,11 +152,7 @@ impl ResolutionTrace {
 
     /// Convert to resolution metadata for the lockfile.
     pub fn to_metadata(&self, package: &str) -> gust_types::ResolutionMetadata {
-        let required_by = self
-            .required_by
-            .get(package)
-            .cloned()
-            .unwrap_or_default();
+        let required_by = self.required_by.get(package).cloned().unwrap_or_default();
 
         gust_types::ResolutionMetadata {
             required_by,
@@ -177,7 +178,11 @@ mod tests {
     #[test]
     fn test_resolution_trace() {
         let mut trace = ResolutionTrace::new();
-        trace.record_choice("swift-log", &Version::new(1, 5, 4), ChoiceReason::LockedHint);
+        trace.record_choice(
+            "swift-log",
+            &Version::new(1, 5, 4),
+            ChoiceReason::LockedHint,
+        );
         trace.record_requirement("swift-log", "my-app");
         trace.record_requirement("swift-log", "swift-nio");
 

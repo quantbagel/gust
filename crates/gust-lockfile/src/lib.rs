@@ -820,13 +820,18 @@ mod tests {
         assert_eq!(v2.version, 2);
         assert_eq!(v2.packages.len(), 1);
         assert_eq!(v2.packages[0].name, "swift-log");
-        assert_eq!(v2.packages[0].git.as_deref(), Some("https://github.com/apple/swift-log.git"));
+        assert_eq!(
+            v2.packages[0].git.as_deref(),
+            Some("https://github.com/apple/swift-log.git")
+        );
     }
 
     #[test]
     fn test_v2_with_overrides() {
         let mut lockfile = LockfileV2::default();
-        lockfile.overrides.insert("swift-log".to_string(), "1.5.4".to_string());
+        lockfile
+            .overrides
+            .insert("swift-log".to_string(), "1.5.4".to_string());
         lockfile.upsert(LockedPackageV2::registry(
             "swift-log",
             Version::new(1, 5, 4),
@@ -848,7 +853,10 @@ mod tests {
         );
 
         assert_eq!(pkg.source, DependencySource::Path);
-        assert_eq!(pkg.path.as_ref().unwrap(), &PathBuf::from("../my-local-lib"));
+        assert_eq!(
+            pkg.path.as_ref().unwrap(),
+            &PathBuf::from("../my-local-lib")
+        );
         assert_eq!(pkg.content_hash.as_deref(), Some("blake3:def456"));
     }
 

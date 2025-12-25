@@ -13,18 +13,14 @@ impl ConflictFormatter {
         requirements: &[(String, String)], // (requirer, requirement)
         _root_name: &str,
     ) -> ConflictDerivation {
-        let mut derivation = ConflictDerivation::new(format!(
-            "Incompatible version requirements for {}",
-            package
-        ));
+        let mut derivation =
+            ConflictDerivation::new(format!("Incompatible version requirements for {}", package));
 
         // Add steps for each requirement
         for (from, requirement) in requirements {
-            let step = DerivationStep::new(format!(
-                "{} requires {} {}",
-                from, package, requirement
-            ))
-            .with_package(from.clone());
+            let step =
+                DerivationStep::new(format!("{} requires {} {}", from, package, requirement))
+                    .with_package(from.clone());
             derivation.add_step(step);
         }
 

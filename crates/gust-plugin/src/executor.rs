@@ -71,9 +71,9 @@ impl PluginExecutor {
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
 
-        let mut child = cmd.spawn().map_err(|e| {
-            PluginError::ExecutionFailed(format!("Failed to spawn plugin: {}", e))
-        })?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| PluginError::ExecutionFailed(format!("Failed to spawn plugin: {}", e)))?;
 
         // Send input to plugin via stdin
         if let Some(mut stdin) = child.stdin.take() {

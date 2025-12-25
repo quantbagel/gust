@@ -103,10 +103,7 @@ pub struct WorkspaceResolution {
 
 impl WorkspaceResolution {
     /// Get the resolved packages for a specific member.
-    pub fn packages_for_member(
-        &self,
-        member_name: &str,
-    ) -> Vec<&gust_resolver::ResolvedDep> {
+    pub fn packages_for_member(&self, member_name: &str) -> Vec<&gust_resolver::ResolvedDep> {
         if let Some(dep_names) = self.member_deps.get(member_name) {
             dep_names
                 .iter()
@@ -203,6 +200,9 @@ mod tests {
 
         // Both deps should be resolved
         assert!(resolution.resolution.packages.contains_key("swift-log"));
-        assert!(resolution.resolution.packages.contains_key("swift-argument-parser"));
+        assert!(resolution
+            .resolution
+            .packages
+            .contains_key("swift-argument-parser"));
     }
 }

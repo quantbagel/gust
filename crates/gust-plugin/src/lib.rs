@@ -11,8 +11,8 @@ mod executor;
 mod protocol;
 
 pub use discovery::{discover_plugins, DiscoveredPlugin, PluginKind};
-pub use executor::{PluginExecutor, PluginContext, PluginResult};
-pub use protocol::{PluginInput, PluginOutput, PluginMessage};
+pub use executor::{PluginContext, PluginExecutor, PluginResult};
+pub use protocol::{PluginInput, PluginMessage, PluginOutput};
 
 use gust_types::{PluginCapability, PluginPermission};
 use std::path::{Path, PathBuf};

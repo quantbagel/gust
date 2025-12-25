@@ -523,10 +523,7 @@ pub enum CommandIntent {
     /// Source code formatting
     SourceCodeFormatting,
     /// Custom intent with description
-    Custom {
-        verb: String,
-        description: String,
-    },
+    Custom { verb: String, description: String },
 }
 
 /// Permissions that plugins can request.

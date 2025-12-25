@@ -177,8 +177,9 @@ impl VersionSet for GustVersionSet {
 
     fn is_disjoint(&self, other: &Self) -> bool {
         // Empty set is disjoint with everything
-        if (self.negated && self.req.is_none() && self.included.is_empty()) ||
-           (other.negated && other.req.is_none() && other.included.is_empty()) {
+        if (self.negated && self.req.is_none() && self.included.is_empty())
+            || (other.negated && other.req.is_none() && other.included.is_empty())
+        {
             return true;
         }
         false // Conservative
@@ -248,9 +249,7 @@ impl<'a, P: PackageProvider> GustDependencyProvider<'a, P> {
             .overrides
             .iter()
             .filter_map(|(name, version)| {
-                VersionReq::parse(version)
-                    .ok()
-                    .map(|v| (name.clone(), v))
+                VersionReq::parse(version).ok().map(|v| (name.clone(), v))
             })
             .collect();
 
@@ -259,9 +258,7 @@ impl<'a, P: PackageProvider> GustDependencyProvider<'a, P> {
             .constraints
             .iter()
             .filter_map(|(name, version)| {
-                VersionReq::parse(version)
-                    .ok()
-                    .map(|v| (name.clone(), v))
+                VersionReq::parse(version).ok().map(|v| (name.clone(), v))
             })
             .collect();
 
@@ -348,7 +345,10 @@ impl<'a, P: PackageProvider> DependencyProvider for GustDependencyProvider<'a, P
         range: &Self::VS,
     ) -> Result<Option<Self::V>, Self::Err> {
         #[cfg(test)]
-        eprintln!("choose_version called for {:?} with range {:?}", package, range);
+        eprintln!(
+            "choose_version called for {:?} with range {:?}",
+            package, range
+        );
 
         match package {
             GustPackage::Root => {
@@ -366,9 +366,11 @@ impl<'a, P: PackageProvider> DependencyProvider for GustDependencyProvider<'a, P
                         .collect();
 
                     if let Some(version) = matching.into_iter().max() {
-                        self.trace
-                            .borrow_mut()
-                            .record_choice(name, &version, ChoiceReason::Override);
+                        self.trace.borrow_mut().record_choice(
+                            name,
+                            &version,
+                            ChoiceReason::Override,
+                        );
                         return Ok(Some(GustVersion(version)));
                     }
                 }
@@ -383,9 +385,11 @@ impl<'a, P: PackageProvider> DependencyProvider for GustDependencyProvider<'a, P
                 // Check lockfile hints first
                 if let Some(locked) = self.hints.preferred_version(name) {
                     if matching.iter().any(|v| v == locked) {
-                        self.trace
-                            .borrow_mut()
-                            .record_choice(name, locked, ChoiceReason::LockedHint);
+                        self.trace.borrow_mut().record_choice(
+                            name,
+                            locked,
+                            ChoiceReason::LockedHint,
+                        );
                         return Ok(Some(GustVersion(locked.clone())));
                     }
                 }
@@ -422,7 +426,10 @@ impl<'a, P: PackageProvider> DependencyProvider for GustDependencyProvider<'a, P
                 let mut deps = Map::default();
 
                 #[cfg(test)]
-                eprintln!("get_dependencies for Root, manifest has {} deps", self.manifest.dependencies.len());
+                eprintln!(
+                    "get_dependencies for Root, manifest has {} deps",
+                    self.manifest.dependencies.len()
+                );
 
                 for (name, dep) in &self.manifest.dependencies {
                     let pkg = GustPackage::named(name);
@@ -449,9 +456,7 @@ impl<'a, P: PackageProvider> DependencyProvider for GustDependencyProvider<'a, P
 
                 // Record requirements for trace
                 for dep in &deps {
-                    self.trace
-                        .borrow_mut()
-                        .record_requirement(&dep.name, name);
+                    self.trace.borrow_mut().record_requirement(&dep.name, name);
                 }
 
                 // Convert to PubGrub format

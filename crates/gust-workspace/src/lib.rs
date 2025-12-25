@@ -11,7 +11,7 @@ mod loader;
 mod resolver;
 
 pub use discovery::{find_workspace_root, WorkspaceDiscovery};
-pub use loader::{WorkspaceLoader, LoadedWorkspace};
+pub use loader::{LoadedWorkspace, WorkspaceLoader};
 pub use resolver::WorkspaceResolver;
 
 use gust_types::{Dependency, Manifest, WorkspaceConfig};

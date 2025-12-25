@@ -48,7 +48,9 @@ impl WorkspaceLoader {
         }
 
         let config = root_manifest.workspace.clone().ok_or_else(|| {
-            WorkspaceError::InvalidConfig("No [workspace] section found in root manifest".to_string())
+            WorkspaceError::InvalidConfig(
+                "No [workspace] section found in root manifest".to_string(),
+            )
         })?;
 
         // Build shared dependencies map
@@ -61,11 +63,7 @@ impl WorkspaceLoader {
         let mut members = Vec::new();
         let member_names: Vec<String> = member_paths
             .iter()
-            .filter_map(|p| {
-                find_manifest(p)
-                    .ok()
-                    .map(|(m, _)| m.package.name.clone())
-            })
+            .filter_map(|p| find_manifest(p).ok().map(|(m, _)| m.package.name.clone()))
             .collect();
 
         for member_path in member_paths {
@@ -169,7 +167,8 @@ mod tests {
     #[test]
     fn test_dependency_inheritance_check() {
         // Regular dependency with version
-        let versioned = Dependency::registry("test", gust_types::VersionReq::parse("^1.0").unwrap());
+        let versioned =
+            Dependency::registry("test", gust_types::VersionReq::parse("^1.0").unwrap());
         assert!(!versioned.is_workspace_inherited());
 
         // Bare dependency (workspace inherited)

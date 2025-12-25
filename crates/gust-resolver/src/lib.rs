@@ -16,7 +16,9 @@ pub mod provider;
 pub use error::ResolveError;
 pub use hints::{ChoiceReason, LockfileHints, ResolutionTrace};
 pub use package::GustPackage;
-pub use provider::{GustDependencyProvider, GustVersion, GustVersionSet, MemoryProvider, PackageProvider};
+pub use provider::{
+    GustDependencyProvider, GustVersion, GustVersionSet, MemoryProvider, PackageProvider,
+};
 
 use gust_types::{Dependency, Manifest, ResolutionStrategy, Version};
 use pubgrub::resolve as pubgrub_resolve;
@@ -101,12 +103,9 @@ impl<P: PackageProvider> Resolver<P> {
     /// proper backtracking and conflict detection.
     pub fn resolve(&self, manifest: &Manifest) -> Result<Resolution, ResolveError> {
         // Create the dependency provider
-        let dp = GustDependencyProvider::new(
-            &self.provider,
-            Arc::new(manifest.clone()),
-        )
-        .with_hints(self.hints.clone())
-        .with_strategy(self.strategy);
+        let dp = GustDependencyProvider::new(&self.provider, Arc::new(manifest.clone()))
+            .with_hints(self.hints.clone())
+            .with_strategy(self.strategy);
 
         // Run PubGrub resolution
         let root = GustPackage::Root;
@@ -117,7 +116,10 @@ impl<P: PackageProvider> Resolver<P> {
                 let mut resolution = Resolution::default();
 
                 #[cfg(test)]
-                eprintln!("PubGrub solution: {:?}", solution.keys().collect::<Vec<_>>());
+                eprintln!(
+                    "PubGrub solution: {:?}",
+                    solution.keys().collect::<Vec<_>>()
+                );
 
                 for (package, version) in solution {
                     #[cfg(test)]
@@ -164,21 +166,17 @@ impl<P: PackageProvider> Resolver<P> {
                 package,
                 version,
                 source,
-            }) => {
-                Err(ResolveError::ProviderError(format!(
-                    "Failed to get dependencies for {} {}: {}",
-                    package, version, source
-                )))
-            }
+            }) => Err(ResolveError::ProviderError(format!(
+                "Failed to get dependencies for {} {}: {}",
+                package, version, source
+            ))),
             Err(PubGrubError::ErrorChoosingVersion { package, source }) => {
                 Err(ResolveError::ProviderError(format!(
                     "Failed to choose version for {}: {}",
                     package, source
                 )))
             }
-            Err(PubGrubError::ErrorInShouldCancel(e)) => {
-                Err(e)
-            }
+            Err(PubGrubError::ErrorInShouldCancel(e)) => Err(e),
         }
     }
 }
@@ -234,8 +232,14 @@ mod tests {
         );
 
         let resolution = resolver.resolve(&manifest).unwrap();
-        eprintln!("Resolution packages: {:?}", resolution.packages.keys().collect::<Vec<_>>());
-        let resolved = resolution.packages.get("swift-log").expect("swift-log should be in resolution");
+        eprintln!(
+            "Resolution packages: {:?}",
+            resolution.packages.keys().collect::<Vec<_>>()
+        );
+        let resolved = resolution
+            .packages
+            .get("swift-log")
+            .expect("swift-log should be in resolution");
         assert_eq!(resolved.version, Version::new(1, 5, 4));
     }
 
