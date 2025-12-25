@@ -410,7 +410,7 @@ pub fn generate_gust_toml(manifest: &Manifest) -> String {
 
     if !manifest.targets.is_empty() {
         for target in &manifest.targets {
-            out.push_str(&format!("\n[[target]]\n"));
+            out.push_str("\n[[target]]\n");
             out.push_str(&format!("name = \"{}\"\n", target.name));
             out.push_str(&format!("type = \"{:?}\"\n", target.target_type).to_lowercase());
             if !target.dependencies.is_empty() {

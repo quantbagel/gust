@@ -435,7 +435,7 @@ pub async fn add(
 
     // Extract the actual package name (last component of org/repo)
     let name = if pkg_spec.contains('/') {
-        pkg_spec.split('/').last().unwrap_or(pkg_spec)
+        pkg_spec.split('/').next_back().unwrap_or(pkg_spec)
     } else {
         pkg_spec
     };
@@ -588,8 +588,7 @@ pub async fn remove(package: &str) -> Result<()> {
     while i < lines.len() {
         let line = lines[i].trim();
         // Check if line starts with the package name followed by = or space
-        if line.starts_with(package) {
-            let rest = &line[package.len()..];
+        if let Some(rest) = line.strip_prefix(package) {
             if rest.starts_with(' ') || rest.starts_with('=') {
                 lines.remove(i);
                 removed = true;
@@ -667,7 +666,7 @@ pub async fn update(package: Option<&str>, breaking: bool) -> Result<()> {
     let packages_to_check: Vec<_> = lockfile
         .packages
         .iter()
-        .filter(|p| package.map_or(true, |name| p.name == name))
+        .filter(|p| package.is_none_or(|name| p.name == name))
         .collect();
 
     if packages_to_check.is_empty() {
@@ -1342,7 +1341,7 @@ fn generate_package_swift(manifest: &Manifest) -> String {
     // Dependencies
     if !manifest.dependencies.is_empty() {
         out.push_str("    dependencies: [\n");
-        for (_, dep) in &manifest.dependencies {
+        for dep in manifest.dependencies.values() {
             if let Some(git) = &dep.git {
                 if let Some(tag) = &dep.tag {
                     out.push_str(&format!(

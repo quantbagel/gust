@@ -1,7 +1,9 @@
 //! Parallel package fetching for Gust.
 
+#![allow(clippy::ptr_arg)]
+
 use gust_types::Dependency;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 use thiserror::Error;
@@ -267,7 +269,7 @@ impl Fetcher {
     }
 }
 
-fn compute_dir_hash(path: &PathBuf) -> Result<String, FetchError> {
+fn compute_dir_hash(path: &Path) -> Result<String, FetchError> {
     use rayon::prelude::*;
     use std::collections::BTreeMap;
     use std::fs;
@@ -308,7 +310,7 @@ fn compute_dir_hash(path: &PathBuf) -> Result<String, FetchError> {
         Ok(())
     }
 
-    collect_files(path.as_path(), "", &mut files)?;
+    collect_files(path, "", &mut files)?;
 
     // Parallel hash all files using rayon + mmap (Apple Silicon optimization)
     // mmap provides zero-copy reads directly from the kernel page cache
@@ -396,7 +398,7 @@ fn clone_with_git(
         .to_string();
 
     // Compute checksum
-    let checksum = compute_dir_hash(&dest.to_path_buf())?;
+    let checksum = compute_dir_hash(dest)?;
 
     Ok((revision, checksum))
 }
@@ -460,7 +462,7 @@ fn clone_with_gix(
     let revision = head.to_string();
 
     // Compute checksum
-    let checksum = compute_dir_hash(&dest.to_path_buf())?;
+    let checksum = compute_dir_hash(dest)?;
 
     Ok((revision, checksum))
 }

@@ -159,7 +159,7 @@ impl Builder {
             deps_hash,
             self.toolchain.version.clone(),
             self.platform_id(),
-            options.configuration.clone(),
+            options.configuration,
             options.swift_flags.clone(),
         ))
     }

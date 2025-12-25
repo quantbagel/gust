@@ -226,7 +226,7 @@ pub enum TargetType {
 }
 
 /// A complete package manifest with all dependencies and targets.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Manifest {
     /// Package metadata
     pub package: Package,
@@ -245,19 +245,6 @@ pub struct Manifest {
     /// Build settings
     #[serde(default)]
     pub build: Option<BuildSettings>,
-}
-
-impl Default for Manifest {
-    fn default() -> Self {
-        Self {
-            package: Package::default(),
-            dependencies: HashMap::new(),
-            dev_dependencies: HashMap::new(),
-            targets: Vec::new(),
-            binary_cache: None,
-            build: None,
-        }
-    }
 }
 
 /// Binary cache configuration.
