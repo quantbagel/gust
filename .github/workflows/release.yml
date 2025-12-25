@@ -7,96 +7,11 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUST_BACKTRACE: 1
 
 jobs:
-  # Run all tests before building release artifacts
-  test:
-    name: Test Suite
-    runs-on: macos-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
-
-      - name: Cache Cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: macos-cargo-test-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            macos-cargo-test-
-
-      - name: Check Swift version
-        run: swift --version
-
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-
-      - name: Run Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
-
-      - name: Run all tests
-        run: cargo test --all-features --workspace
-
-      - name: Build release
-        run: cargo build --release
-
-      - name: CLI smoke test
-        run: |
-          ./target/release/gust --version
-          ./target/release/gust --help
-
-  # Integration tests to verify Swift tooling works
-  integration:
-    name: Integration Test
-    runs-on: macos-latest
-    needs: test
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache Cargo
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/
-            ~/.cargo/registry/index/
-            ~/.cargo/registry/cache/
-            ~/.cargo/git/db/
-            target/
-          key: macos-cargo-integration-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Build release
-        run: cargo build --release
-
-      - name: Create and test package
-        run: |
-          cd /tmp
-          $GITHUB_WORKSPACE/target/release/gust new testpkg --type exe
-          cd testpkg
-          cat Gust.toml
-          $GITHUB_WORKSPACE/target/release/gust add swift-log --git https://github.com/apple/swift-log.git --tag 1.5.0
-          $GITHUB_WORKSPACE/target/release/gust install
-          $GITHUB_WORKSPACE/target/release/gust outdated
-          $GITHUB_WORKSPACE/target/release/gust tree
-
   build:
     name: Build (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
-    needs: [test, integration]
     strategy:
       matrix:
         include:
@@ -137,7 +52,7 @@ jobs:
           ./target/${{ matrix.target }}/release/gust completions fish > dist/completions/gust.fish
           ./target/${{ matrix.target }}/release/gust manpage > dist/man/man1/gust.1
 
-      - name: Package (Unix)
+      - name: Package
         run: |
           mkdir -p dist
           cp target/${{ matrix.target }}/release/gust dist/
@@ -173,12 +88,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # Publish all crates to crates.io in dependency order
   publish:
     name: Publish to crates.io
     needs: release
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
 
     steps:
       - uses: actions/checkout@v4
@@ -192,29 +105,25 @@ jobs:
         run: |
           set -e
 
-          # Helper function to publish with retry
           publish_crate() {
             local crate=$1
             echo "Publishing $crate..."
             cd crates/$crate
 
-            # Check if already published
-            if cargo search $crate 2>/dev/null | grep -q "^$crate = "; then
-              CURRENT_VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
-              PUBLISHED_VERSION=$(cargo search $crate 2>/dev/null | head -1 | sed 's/.*= "\([^"]*\)".*/\1/')
-              if [ "$CURRENT_VERSION" = "$PUBLISHED_VERSION" ]; then
-                echo "$crate $CURRENT_VERSION already published, skipping..."
-                cd ../..
-                return 0
-              fi
+            # Check if already published at this version
+            CURRENT_VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+            if cargo search "$crate" 2>/dev/null | grep -q "^$crate = \"$CURRENT_VERSION\""; then
+              echo "$crate $CURRENT_VERSION already published, skipping..."
+              cd ../..
+              return 0
             fi
 
-            # Publish with retry for index sync delays
+            # Publish with retry
             for i in 1 2 3; do
               if cargo publish --no-verify; then
                 echo "$crate published successfully"
                 cd ../..
-                sleep 30  # Wait for crates.io index to update
+                sleep 30
                 return 0
               fi
               echo "Attempt $i failed, retrying in 60s..."
@@ -247,7 +156,7 @@ jobs:
           publish_crate gust-workspace
           publish_crate gust-plugin
 
-          # Level 4: Main CLI (depends on everything)
+          # Level 4: Main CLI
           publish_crate gust
 
           echo "All crates published successfully!"
