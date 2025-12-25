@@ -125,15 +125,6 @@ enum Commands {
         /// Disable binary artifact caching
         #[arg(long)]
         no_cache: bool,
-        /// Target platform (e.g., iOS, macOS, tvOS, watchOS)
-        #[arg(long)]
-        platform: Option<String>,
-        /// Target SDK (e.g., iphoneos, iphonesimulator, macosx)
-        #[arg(long)]
-        sdk: Option<String>,
-        /// Target architecture (e.g., arm64, x86_64)
-        #[arg(long)]
-        arch: Option<String>,
     },
 
     /// Run the executable
@@ -319,20 +310,8 @@ async fn main() -> Result<()> {
             release,
             target,
             no_cache,
-            platform,
-            sdk,
-            arch,
         } => {
-            commands::build(
-                release,
-                target.as_deref(),
-                cli.global.jobs,
-                no_cache,
-                platform.as_deref(),
-                sdk.as_deref(),
-                arch.as_deref(),
-            )
-            .await?;
+            commands::build(release, target.as_deref(), cli.global.jobs, no_cache).await?;
         }
         Commands::Run { target, args } => {
             commands::run(target.as_deref(), &args).await?;

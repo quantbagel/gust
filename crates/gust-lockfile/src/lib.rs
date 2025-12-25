@@ -22,6 +22,12 @@ pub enum LockfileError {
     SerializeError(#[from] toml::ser::Error),
     #[error("Async task error: {0}")]
     TaskError(String),
+    #[error("Checksum mismatch for {package}: expected {expected}, got {actual}")]
+    ChecksumMismatch {
+        package: String,
+        expected: String,
+        actual: String,
+    },
 }
 
 /// A Gust lockfile.
@@ -85,6 +91,90 @@ impl Lockfile {
     /// Build a lookup map for quick access.
     pub fn as_map(&self) -> HashMap<String, &LockedPackage> {
         self.packages.iter().map(|p| (p.name.clone(), p)).collect()
+    }
+
+    /// Verify checksums for all packages against their cached content.
+    ///
+    /// Returns a list of packages with checksum mismatches.
+    /// Call this during `install --frozen` to ensure reproducibility.
+    pub fn verify_checksums(
+        &self,
+        cache_dir: &Path,
+    ) -> Result<Vec<ChecksumVerification>, LockfileError> {
+        let mut results = Vec::new();
+
+        for pkg in &self.packages {
+            // Only verify packages with checksums
+            let expected_checksum = match &pkg.checksum {
+                Some(c) if !c.is_empty() => c,
+                _ => continue,
+            };
+
+            // Find the cached package directory
+            let pkg_dir = cache_dir.join(sanitize_package_name(&pkg.name));
+            if !pkg_dir.exists() {
+                results.push(ChecksumVerification {
+                    package: pkg.name.clone(),
+                    expected: expected_checksum.clone(),
+                    actual: None,
+                    status: VerificationStatus::Missing,
+                });
+                continue;
+            }
+
+            // Compute actual checksum
+            match compute_directory_checksum(&pkg_dir) {
+                Ok(actual) => {
+                    // Handle prefixed checksums (e.g., "blake3:abc123")
+                    let expected_hash = expected_checksum
+                        .strip_prefix("blake3:")
+                        .unwrap_or(expected_checksum);
+
+                    if actual == expected_hash {
+                        results.push(ChecksumVerification {
+                            package: pkg.name.clone(),
+                            expected: expected_checksum.clone(),
+                            actual: Some(actual),
+                            status: VerificationStatus::Verified,
+                        });
+                    } else {
+                        results.push(ChecksumVerification {
+                            package: pkg.name.clone(),
+                            expected: expected_checksum.clone(),
+                            actual: Some(actual),
+                            status: VerificationStatus::Mismatch,
+                        });
+                    }
+                }
+                Err(_) => {
+                    results.push(ChecksumVerification {
+                        package: pkg.name.clone(),
+                        expected: expected_checksum.clone(),
+                        actual: None,
+                        status: VerificationStatus::Error,
+                    });
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Verify all checksums and return error if any mismatch.
+    pub fn verify_checksums_strict(&self, cache_dir: &Path) -> Result<(), LockfileError> {
+        let results = self.verify_checksums(cache_dir)?;
+
+        for result in results {
+            if result.status == VerificationStatus::Mismatch {
+                return Err(LockfileError::ChecksumMismatch {
+                    package: result.package,
+                    expected: result.expected,
+                    actual: result.actual.unwrap_or_else(|| "<none>".to_string()),
+                });
+            }
+        }
+
+        Ok(())
     }
 
     /// Compute the difference between this lockfile and another.
@@ -759,6 +849,101 @@ impl AnyLockfile {
             AnyLockfile::V2(v2) => v2.version,
         }
     }
+}
+
+// ============================================================================
+// Checksum Verification
+// ============================================================================
+
+/// Result of verifying a package checksum.
+#[derive(Debug, Clone)]
+pub struct ChecksumVerification {
+    /// Package name
+    pub package: String,
+    /// Expected checksum from lockfile
+    pub expected: String,
+    /// Actual computed checksum (if available)
+    pub actual: Option<String>,
+    /// Verification status
+    pub status: VerificationStatus,
+}
+
+/// Status of checksum verification.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VerificationStatus {
+    /// Checksum matches
+    Verified,
+    /// Checksum does not match
+    Mismatch,
+    /// Package not found in cache
+    Missing,
+    /// Error computing checksum
+    Error,
+}
+
+/// Sanitize a package name for use as a directory name.
+fn sanitize_package_name(name: &str) -> String {
+    name.chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+/// Compute BLAKE3 checksum of a directory.
+fn compute_directory_checksum(path: &Path) -> Result<String, std::io::Error> {
+    use std::collections::BTreeMap;
+
+    let mut file_hashes: BTreeMap<String, String> = BTreeMap::new();
+
+    fn collect_and_hash(
+        dir: &Path,
+        prefix: &str,
+        hashes: &mut BTreeMap<String, String>,
+    ) -> Result<(), std::io::Error> {
+        if dir.is_dir() {
+            for entry in std::fs::read_dir(dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                let name = path.file_name().unwrap().to_string_lossy();
+
+                // Skip .git directory
+                if name == ".git" {
+                    continue;
+                }
+
+                let key = if prefix.is_empty() {
+                    name.to_string()
+                } else {
+                    format!("{}/{}", prefix, name)
+                };
+
+                if path.is_dir() {
+                    collect_and_hash(&path, &key, hashes)?;
+                } else {
+                    let content = std::fs::read(&path)?;
+                    let hash = blake3::hash(&content).to_hex().to_string();
+                    hashes.insert(key, hash);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    collect_and_hash(path, "", &mut file_hashes)?;
+
+    // Combine all hashes
+    let combined: String = file_hashes
+        .iter()
+        .map(|(k, v)| format!("{}:{}", k, v))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    Ok(blake3::hash(combined.as_bytes()).to_hex().to_string())
 }
 
 #[cfg(test)]

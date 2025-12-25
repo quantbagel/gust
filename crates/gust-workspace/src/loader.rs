@@ -101,7 +101,8 @@ impl WorkspaceLoader {
                 // Check if this dependency is on another workspace member
                 if all_member_names.contains(&dep_name) {
                     workspace_deps.push(dep_name.clone());
-                    // Create a path dependency for workspace members
+                    // Keep the dependency as-is - it will be resolved as a workspace member
+                    // The resolver handles workspace member detection separately
                     resolved_deps.insert(dep_name, dep);
                 } else if dep.is_workspace_inherited() {
                     // Inherit from workspace shared dependencies

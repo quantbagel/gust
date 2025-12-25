@@ -234,9 +234,6 @@ pub async fn build(
     target: Option<&str>,
     jobs: Option<usize>,
     no_cache: bool,
-    platform: Option<&str>,
-    sdk: Option<&str>,
-    arch: Option<&str>,
 ) -> Result<()> {
     let cwd = env::current_dir().into_diagnostic()?;
     let (manifest, manifest_type) = find_manifest(&cwd).into_diagnostic()?;
@@ -244,22 +241,6 @@ pub async fn build(
     // Auto-generate Package.swift from Gust.toml if needed
     if manifest_type == ManifestType::GustToml {
         write_package_swift(&manifest, &cwd).into_diagnostic()?;
-    }
-
-    // Determine if we need xcodebuild for cross-platform builds
-    let needs_xcodebuild = platform.is_some() || sdk.is_some();
-
-    if needs_xcodebuild {
-        return build_with_xcodebuild(
-            &cwd,
-            &manifest,
-            release,
-            target,
-            platform,
-            sdk,
-            arch,
-        )
-        .await;
     }
 
     let builder = Builder::new(cwd).into_diagnostic()?;
@@ -314,98 +295,10 @@ pub async fn build(
     Ok(())
 }
 
-/// Build using xcodebuild for cross-platform targets (iOS, tvOS, watchOS, etc.)
-async fn build_with_xcodebuild(
-    cwd: &std::path::Path,
-    manifest: &Manifest,
-    release: bool,
-    target: Option<&str>,
-    platform: Option<&str>,
-    sdk: Option<&str>,
-    arch: Option<&str>,
-) -> Result<()> {
-    // Resolve SDK from platform if not explicitly provided
-    let resolved_sdk = sdk
-        .map(String::from)
-        .or_else(|| {
-            platform.map(|p| match p.to_lowercase().as_str() {
-                "ios" => "iphoneos".to_string(),
-                "ios-simulator" | "iossimulator" => "iphonesimulator".to_string(),
-                "tvos" => "appletvos".to_string(),
-                "tvos-simulator" | "tvossimulator" => "appletvsimulator".to_string(),
-                "watchos" => "watchos".to_string(),
-                "watchos-simulator" | "watchossimulator" => "watchsimulator".to_string(),
-                "visionos" => "xros".to_string(),
-                "visionos-simulator" | "visionossimulator" => "xrsimulator".to_string(),
-                "macos" | "macosx" => "macosx".to_string(),
-                _ => p.to_string(),
-            })
-        })
-        .unwrap_or_else(|| "macosx".to_string());
-
-    let configuration = if release { "release" } else { "debug" };
-
-    println!(
-        "{} Building {} for {} ({})",
-        style("→").blue().bold(),
-        style(&manifest.package.name).cyan(),
-        style(&resolved_sdk).yellow(),
-        configuration
-    );
-
-    let start = std::time::Instant::now();
-
-    // Build xcodebuild command
-    let mut cmd = Command::new("xcodebuild");
-    cmd.arg("build");
-    cmd.arg("-scheme").arg(&manifest.package.name);
-    cmd.arg("-sdk").arg(&resolved_sdk);
-    cmd.arg("-configuration")
-        .arg(if release { "Release" } else { "Debug" });
-
-    // Add architecture if specified
-    if let Some(a) = arch {
-        cmd.arg(format!("ARCHS={}", a));
-        cmd.arg(format!("ONLY_ACTIVE_ARCH=NO"));
-    }
-
-    // Specify build target if provided
-    if let Some(t) = target {
-        cmd.arg("-target").arg(t);
-    }
-
-    // Build for library
-    cmd.arg("BUILD_LIBRARY_FOR_DISTRIBUTION=YES");
-
-    cmd.current_dir(cwd);
-    cmd.stdout(std::process::Stdio::inherit());
-    cmd.stderr(std::process::Stdio::inherit());
-
-    let status = cmd.status().into_diagnostic()?;
-
-    let duration = start.elapsed().as_secs_f64();
-
-    if status.success() {
-        println!(
-            "{} Built for {} in {:.2}s",
-            style("✓").green().bold(),
-            style(&resolved_sdk).yellow(),
-            duration
-        );
-        Ok(())
-    } else {
-        Err(miette::miette!(
-            "xcodebuild failed. Make sure you have Xcode installed and the package \
-             is configured correctly for {}.",
-            resolved_sdk
-        ))
-    }
-}
-
 /// Run the executable.
 pub async fn run(target: Option<&str>, args: &[String]) -> Result<()> {
-    // First build (with cache) - run uses default macOS build
-    build(false, target, None, false, None, None, None).await?;
+    // First build (with cache)
+    build(false, target, None, false).await?;
 
     let cwd = env::current_dir().into_diagnostic()?;
     let (manifest, _) = find_manifest(&cwd).into_diagnostic()?;

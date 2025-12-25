@@ -239,6 +239,10 @@ pub struct GustDependencyProvider<'a, P: PackageProvider> {
 
     /// Cache of available versions
     version_cache: RefCell<HashMap<String, Vec<Version>>>,
+
+    /// Cache of dependencies (package@version -> deps)
+    /// Prevents re-fetching during PubGrub backtracking
+    dependency_cache: RefCell<HashMap<(String, Version), Vec<Dependency>>>,
 }
 
 impl<'a, P: PackageProvider> GustDependencyProvider<'a, P> {
@@ -271,6 +275,7 @@ impl<'a, P: PackageProvider> GustDependencyProvider<'a, P> {
             strategy: ResolutionStrategy::Highest,
             trace: RefCell::new(ResolutionTrace::new()),
             version_cache: RefCell::new(HashMap::new()),
+            dependency_cache: RefCell::new(HashMap::new()),
         }
     }
 
@@ -305,6 +310,29 @@ impl<'a, P: PackageProvider> GustDependencyProvider<'a, P> {
             .borrow_mut()
             .insert(package.to_string(), versions.clone());
         Ok(versions)
+    }
+
+    /// Get dependencies for a package version (cached).
+    /// This prevents re-fetching during PubGrub backtracking.
+    fn get_dependencies_cached(
+        &self,
+        package: &str,
+        version: &Version,
+    ) -> Result<Vec<Dependency>, ResolveError> {
+        let key = (package.to_string(), version.clone());
+
+        // Check cache first
+        {
+            let cache = self.dependency_cache.borrow();
+            if let Some(deps) = cache.get(&key) {
+                return Ok(deps.clone());
+            }
+        }
+
+        // Fetch and cache
+        let deps = self.provider.dependencies(package, version)?;
+        self.dependency_cache.borrow_mut().insert(key, deps.clone());
+        Ok(deps)
     }
 }
 
@@ -451,8 +479,8 @@ impl<'a, P: PackageProvider> DependencyProvider for GustDependencyProvider<'a, P
                 Ok(Dependencies::Available(deps))
             }
             GustPackage::Named(name) => {
-                // Get dependencies from the provider
-                let deps = self.provider.dependencies(name, &version.0)?;
+                // Get dependencies from cache (prevents re-fetching during backtracking)
+                let deps = self.get_dependencies_cached(name, &version.0)?;
 
                 // Record requirements for trace
                 for dep in &deps {
