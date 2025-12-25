@@ -1,11 +1,17 @@
 #!/bin/bash
 # Gust installer script
-# Usage: curl -fsSL https://raw.githubusercontent.com/quantbagel/gust/main/install.sh | bash
+# Usage: curl -fsSL https://quantbagel.vercel.app/gust/install.sh | sh
+#
+# Environment variables:
+#   GUST_INSTALL_DIR    - Installation directory (default: ~/.gust/bin)
+#   GUST_VERSION        - Specific version to install (default: latest)
+#   GUST_NO_MODIFY_PATH - Set to 1 to skip modifying shell config
 
 set -euo pipefail
 
 REPO="quantbagel/gust"
 INSTALL_DIR="${GUST_INSTALL_DIR:-$HOME/.gust/bin}"
+NO_MODIFY_PATH="${GUST_NO_MODIFY_PATH:-0}"
 
 # Colors
 RED='\033[0;31m'
@@ -41,6 +47,7 @@ detect_platform() {
         Linux)
             case "$arch" in
                 x86_64) echo "x86_64-unknown-linux-gnu" ;;
+                aarch64) echo "aarch64-unknown-linux-gnu" ;;
                 *) error "Unsupported Linux architecture: $arch" ;;
             esac
             ;;
@@ -68,6 +75,96 @@ get_latest_version() {
     echo "$version"
 }
 
+# Add PATH to shell config file
+add_to_path() {
+    local config_file="$1"
+    local path_line="export PATH=\"$INSTALL_DIR:\$PATH\""
+
+    # Check if already added
+    if [ -f "$config_file" ] && grep -q "$INSTALL_DIR" "$config_file" 2>/dev/null; then
+        return 0
+    fi
+
+    # Add to config
+    echo "" >> "$config_file"
+    echo "# Added by Gust installer" >> "$config_file"
+    echo "$path_line" >> "$config_file"
+
+    return 1
+}
+
+# Add PATH for fish shell
+add_to_fish_path() {
+    local config_file="$1"
+    local path_line="fish_add_path $INSTALL_DIR"
+
+    # Check if already added
+    if [ -f "$config_file" ] && grep -q "$INSTALL_DIR" "$config_file" 2>/dev/null; then
+        return 0
+    fi
+
+    mkdir -p "$(dirname "$config_file")"
+    echo "" >> "$config_file"
+    echo "# Added by Gust installer" >> "$config_file"
+    echo "$path_line" >> "$config_file"
+
+    return 1
+}
+
+# Update shell configurations
+update_shell_configs() {
+    local modified=0
+
+    # Bash
+    if [ -f "$HOME/.bashrc" ]; then
+        if ! add_to_path "$HOME/.bashrc"; then
+            modified=1
+        fi
+    fi
+
+    if [ -f "$HOME/.bash_profile" ]; then
+        if ! add_to_path "$HOME/.bash_profile"; then
+            modified=1
+        fi
+    elif [ -f "$HOME/.profile" ]; then
+        if ! add_to_path "$HOME/.profile"; then
+            modified=1
+        fi
+    fi
+
+    # Zsh
+    if [ -f "$HOME/.zshrc" ] || [ "$SHELL" = */zsh ]; then
+        if ! add_to_path "$HOME/.zshrc"; then
+            modified=1
+        fi
+    fi
+
+    # Also update .zshenv for non-interactive shells
+    if [ -f "$HOME/.zshenv" ]; then
+        if ! add_to_path "$HOME/.zshenv"; then
+            modified=1
+        fi
+    fi
+
+    # Fish
+    if [ -d "$HOME/.config/fish" ] || [ "$SHELL" = */fish ]; then
+        if ! add_to_fish_path "$HOME/.config/fish/config.fish"; then
+            modified=1
+        fi
+    fi
+
+    return $modified
+}
+
+# Remove old installations
+cleanup_old_installations() {
+    # Remove from cargo bin if exists
+    if [ -f "$HOME/.cargo/bin/gust" ]; then
+        info "Removing old installation from ~/.cargo/bin/gust"
+        rm -f "$HOME/.cargo/bin/gust"
+    fi
+}
+
 main() {
     info "Installing Gust - A blazing fast Swift package manager"
     echo ""
@@ -84,6 +181,9 @@ main() {
         version=$(get_latest_version)
     fi
     info "Installing version: $version"
+
+    # Clean up old installations
+    cleanup_old_installations
 
     # Create install directory
     mkdir -p "$INSTALL_DIR"
@@ -145,41 +245,36 @@ main() {
 
     echo ""
     success "Gust $installed_version installed successfully!"
-    echo ""
 
-    # Check if in PATH
-    if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
-        warn "Add Gust to your PATH by adding this to your shell config:"
-        echo ""
-        echo "  export PATH=\"$INSTALL_DIR:\$PATH\""
-        echo ""
-
-        # Detect shell and suggest file
-        local shell_config=""
-        case "$SHELL" in
-            */zsh) shell_config="~/.zshrc" ;;
-            */bash)
-                if [ -f "$HOME/.bash_profile" ]; then
-                    shell_config="~/.bash_profile"
-                else
-                    shell_config="~/.bashrc"
-                fi
-                ;;
-            */fish)
-                echo "  Or for fish shell:"
-                echo "  set -gx PATH $INSTALL_DIR \$PATH"
-                shell_config="~/.config/fish/config.fish"
-                ;;
-        esac
-
-        if [ -n "$shell_config" ]; then
-            echo "  Add it to: $shell_config"
+    # Update PATH in shell configs (unless disabled)
+    if [ "$NO_MODIFY_PATH" != "1" ]; then
+        if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
+            info "Updating shell configuration..."
+            if update_shell_configs; then
+                info "PATH already configured"
+            else
+                success "Added Gust to PATH in shell config"
+                echo ""
+                info "Restart your shell or run:"
+                echo ""
+                echo "  export PATH=\"$INSTALL_DIR:\$PATH\""
+                echo ""
+            fi
+        else
+            info "Gust is already in your PATH"
         fi
-        echo ""
     else
-        info "Gust is already in your PATH"
+        # Manual instructions if auto-update disabled
+        if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
+            echo ""
+            warn "Add Gust to your PATH by adding this to your shell config:"
+            echo ""
+            echo "  export PATH=\"$INSTALL_DIR:\$PATH\""
+            echo ""
+        fi
     fi
 
+    echo ""
     info "Run 'gust --help' to get started"
 }
 
