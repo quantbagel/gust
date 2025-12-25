@@ -1,0 +1,18 @@
+[package]
+name = "gust-manifest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Manifest parsing for Gust (Gust.toml and Package.swift)"
+
+[dependencies]
+gust-types.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+futures.workspace = true
+blake3.workspace = true
+directories.workspace = true
+tracing.workspace = true

@@ -1,0 +1,96 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/gust",
+    "crates/gust-types",
+    "crates/gust-manifest",
+    "crates/gust-resolver",
+    "crates/gust-cache",
+    "crates/gust-fetch",
+    "crates/gust-build",
+    "crates/gust-binary-cache",
+    "crates/gust-lockfile",
+    "crates/gust-platform",
+    "crates/gust-diagnostics",
+    "crates/gust-registry",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/user/gust"
+
+[workspace.dependencies]
+# CLI
+clap = { version = "4.4", features = ["derive", "env", "wrap_help"] }
+
+# Async
+tokio = { version = "1.35", features = ["full"] }
+futures = "0.3"
+
+# HTTP
+reqwest = { version = "0.12", features = ["json", "gzip", "brotli", "stream"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# Dependency resolution
+pubgrub = "0.2"
+
+# Hashing
+blake3 = "1.5"
+
+# Error handling
+miette = { version = "7.0", features = ["fancy"] }
+thiserror = "1.0"
+
+# Filesystem
+walkdir = "2.4"
+ignore = "0.4"
+fs4 = "0.7"
+
+# Git
+gix = { version = "0.58", default-features = false, features = ["blocking-network-client"] }
+
+# Archive/compression
+tar = "0.4"
+zstd = "0.13"
+flate2 = "1.0"
+
+# Progress/output
+indicatif = "0.17"
+console = "0.15"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Platform
+directories = "5.0"
+which = "6.0"
+
+# Parallelism
+rayon = "1.8"
+
+# Semver
+semver = { version = "1.0", features = ["serde"] }
+
+# Crypto
+ed25519-dalek = "2.1"
+
+# Testing
+tempfile = "3.9"
+
+# Internal crates
+gust-types = { path = "crates/gust-types" }
+gust-manifest = { path = "crates/gust-manifest" }
+gust-resolver = { path = "crates/gust-resolver" }
+gust-cache = { path = "crates/gust-cache" }
+gust-fetch = { path = "crates/gust-fetch" }
+gust-build = { path = "crates/gust-build" }
+gust-binary-cache = { path = "crates/gust-binary-cache" }
+gust-lockfile = { path = "crates/gust-lockfile" }
+gust-platform = { path = "crates/gust-platform" }
+gust-diagnostics = { path = "crates/gust-diagnostics" }
+gust-registry = { path = "crates/gust-registry" }

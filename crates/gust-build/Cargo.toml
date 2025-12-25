@@ -1,0 +1,16 @@
+[package]
+name = "gust-build"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Swift build orchestration for Gust"
+
+[dependencies]
+gust-types.workspace = true
+gust-platform.workspace = true
+gust-binary-cache.workspace = true
+tokio.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+indicatif.workspace = true
+blake3.workspace = true

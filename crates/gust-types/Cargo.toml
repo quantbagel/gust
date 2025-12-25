@@ -1,0 +1,11 @@
+[package]
+name = "gust-types"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core types for Gust package manager"
+
+[dependencies]
+serde.workspace = true
+semver.workspace = true
+thiserror.workspace = true

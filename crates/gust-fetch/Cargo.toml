@@ -1,0 +1,18 @@
+[package]
+name = "gust-fetch"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Parallel package fetching for Gust"
+
+[dependencies]
+gust-types.workspace = true
+gust-cache.workspace = true
+tokio.workspace = true
+reqwest.workspace = true
+futures.workspace = true
+gix.workspace = true
+blake3.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+indicatif.workspace = true

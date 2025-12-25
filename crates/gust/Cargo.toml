@@ -1,0 +1,31 @@
+[package]
+name = "gust"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "A blazing fast Swift package manager"
+
+[[bin]]
+name = "gust"
+path = "src/main.rs"
+
+[dependencies]
+gust-types.workspace = true
+gust-manifest.workspace = true
+gust-resolver.workspace = true
+gust-cache.workspace = true
+gust-fetch.workspace = true
+gust-build.workspace = true
+gust-binary-cache.workspace = true
+gust-lockfile.workspace = true
+gust-platform.workspace = true
+gust-diagnostics.workspace = true
+gust-registry.workspace = true
+
+clap.workspace = true
+tokio.workspace = true
+miette.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+indicatif.workspace = true
+console.workspace = true

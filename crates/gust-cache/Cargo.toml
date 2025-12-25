@@ -1,0 +1,19 @@
+[package]
+name = "gust-cache"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Content-addressable cache with hard links for Gust"
+
+[dependencies]
+gust-types.workspace = true
+blake3.workspace = true
+directories.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+walkdir.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

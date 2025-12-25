@@ -1,0 +1,16 @@
+[package]
+name = "gust-registry"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Swift Package Registry API client"
+
+[dependencies]
+gust-types.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+semver.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
