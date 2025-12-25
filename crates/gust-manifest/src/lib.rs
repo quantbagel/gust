@@ -5,14 +5,14 @@
 mod cache;
 
 pub use cache::{CacheStats, ManifestCache};
-use serde::Deserialize;
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::process::Command;
 use gust_types::{
     BinaryCacheConfig, BuildSettings, Dependency, Manifest, Package, Target, TargetType, Version,
     VersionReq,
 };
+use serde::Deserialize;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -74,7 +74,10 @@ struct RawGustToml {
 struct RawPackage {
     name: String,
     version: String,
-    #[serde(default = "default_swift_tools_version", rename = "swift-tools-version")]
+    #[serde(
+        default = "default_swift_tools_version",
+        rename = "swift-tools-version"
+    )]
     swift_tools_version: String,
     #[serde(default)]
     description: Option<String>,
@@ -268,7 +271,10 @@ pub fn parse_package_swift(path: &Path) -> Result<Manifest, ManifestError> {
     }
 
     // Cache miss - run swift package dump-package (slow path)
-    tracing::debug!("Cache miss for {}, running swift package dump-package", path.display());
+    tracing::debug!(
+        "Cache miss for {}, running swift package dump-package",
+        path.display()
+    );
     let dir = path.parent().unwrap_or(Path::new("."));
 
     let output = Command::new("swift")
@@ -325,10 +331,7 @@ fn convert_spm_json(json: serde_json::Value) -> Result<Manifest, ManifestError> 
                     .and_then(|v| v["urlString"].as_str())
                     .unwrap_or("");
 
-                dependencies.insert(
-                    dep_name.to_string(),
-                    Dependency::git(dep_name, url),
-                );
+                dependencies.insert(dep_name.to_string(), Dependency::git(dep_name, url));
             }
         }
     }
@@ -348,7 +351,8 @@ fn convert_spm_json(json: serde_json::Value) -> Result<Manifest, ManifestError> 
                 .map(|arr| {
                     arr.iter()
                         .filter_map(|d| {
-                            d["byName"].as_array()
+                            d["byName"]
+                                .as_array()
                                 .and_then(|a| a.first())
                                 .and_then(|v| v.as_str())
                                 .map(String::from)
@@ -448,9 +452,12 @@ pub async fn parse_manifests_parallel(
                     // Try Gust.toml
                     let gust_toml = dir.join("Gust.toml");
                     if gust_toml.exists() {
-                        match tokio::task::spawn_blocking(move || parse_gust_toml(&gust_toml)).await {
+                        match tokio::task::spawn_blocking(move || parse_gust_toml(&gust_toml)).await
+                        {
                             Ok(r) => r,
-                            Err(e) => Err(ManifestError::SwiftParseError(format!("Task error: {}", e))),
+                            Err(e) => {
+                                Err(ManifestError::SwiftParseError(format!("Task error: {}", e)))
+                            }
                         }
                     } else {
                         Err(ManifestError::NotFound(dir.clone()))
@@ -508,9 +515,12 @@ pub async fn parse_transitive_deps(
                     let gust_toml = dir.join("Gust.toml");
                     if gust_toml.exists() {
                         let toml_path = gust_toml.clone();
-                        match tokio::task::spawn_blocking(move || parse_gust_toml(&toml_path)).await {
+                        match tokio::task::spawn_blocking(move || parse_gust_toml(&toml_path)).await
+                        {
                             Ok(r) => r,
-                            Err(e) => Err(ManifestError::SwiftParseError(format!("Task error: {}", e))),
+                            Err(e) => {
+                                Err(ManifestError::SwiftParseError(format!("Task error: {}", e)))
+                            }
                         }
                     } else {
                         Err(ManifestError::NotFound(dir.clone()))

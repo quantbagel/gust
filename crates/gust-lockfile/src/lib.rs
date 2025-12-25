@@ -3,12 +3,12 @@
 //! Manages Gust.lock files for reproducible builds.
 //! Supports incremental updates to minimize I/O and diff computation.
 
+use gust_types::{DependencySource, Version};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use gust_types::{DependencySource, Version};
 use thiserror::Error;
 use tokio::sync::Mutex;
 
@@ -323,7 +323,11 @@ pub struct LockedPackage {
 
 impl LockedPackage {
     /// Create a new locked package from registry.
-    pub fn registry(name: impl Into<String>, version: Version, checksum: impl Into<String>) -> Self {
+    pub fn registry(
+        name: impl Into<String>,
+        version: Version,
+        checksum: impl Into<String>,
+    ) -> Self {
         Self {
             name: name.into(),
             version,

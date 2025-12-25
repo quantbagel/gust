@@ -71,17 +71,12 @@ impl SwiftToolchain {
     pub fn detect() -> Result<Self, PlatformError> {
         let swift_path = which::which("swift").map_err(|_| PlatformError::SwiftNotFound)?;
 
-        let output = Command::new(&swift_path)
-            .arg("--version")
-            .output()?;
+        let output = Command::new(&swift_path).arg("--version").output()?;
 
         let version_str = String::from_utf8_lossy(&output.stdout);
         let version = Self::parse_version(&version_str)?;
 
-        let parts: Vec<u32> = version
-            .split('.')
-            .filter_map(|s| s.parse().ok())
-            .collect();
+        let parts: Vec<u32> = version.split('.').filter_map(|s| s.parse().ok()).collect();
 
         Ok(Self {
             swift_path,

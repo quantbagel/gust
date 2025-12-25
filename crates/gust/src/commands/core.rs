@@ -1,18 +1,18 @@
 //! Core CLI command implementations.
 
-use crate::commands::ui::{self, pkg, dim, green, separator};
+use crate::commands::ui::{self, dim, green, pkg, separator};
 use crate::commands::version::{check_all_for_updates, filter_breaking};
 use crate::install::{InstallOptions, Installer};
 use console::style;
+use gust_build::{BuildOptions, Builder};
+use gust_cache::GlobalCache;
+use gust_manifest::{find_manifest, generate_gust_toml};
+use gust_types::{BuildConfiguration, Manifest, Package, Target, TargetType, Version};
 use miette::{IntoDiagnostic, Result};
 use std::env;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
-use gust_build::{BuildOptions, Builder};
-use gust_cache::GlobalCache;
-use gust_manifest::{find_manifest, generate_gust_toml};
-use gust_types::{BuildConfiguration, Manifest, Package, Target, TargetType, Version};
 
 /// Well-known Swift package GitHub organizations for auto-discovery
 const KNOWN_ORGS: &[(&str, &str)] = &[
@@ -67,18 +67,13 @@ pub async fn new_package(name: &str, pkg_type: &str, no_git: bool) -> Result<()>
 
     // Create main file
     let main_file = match target_type {
-        TargetType::Executable => {
-            sources_dir.join("main.swift")
-        }
+        TargetType::Executable => sources_dir.join("main.swift"),
         _ => sources_dir.join(format!("{}.swift", name)),
     };
 
     let content = match target_type {
         TargetType::Executable => "print(\"Hello, world!\")\n",
-        _ => &format!(
-            "public struct {} {{\n    public init() {{}}\n}}\n",
-            name
-        ),
+        _ => &format!("public struct {} {{\n    public init() {{}}\n}}\n", name),
     };
 
     fs::write(main_file, content).into_diagnostic()?;
@@ -121,10 +116,7 @@ Gust.lock
 
         if let Ok(status) = git_result {
             if status.success() {
-                println!(
-                    "{} Initialized git repository",
-                    style("✓").green()
-                );
+                println!("{} Initialized git repository", style("✓").green());
             }
         }
     }
@@ -461,11 +453,7 @@ pub async fn add(
     } else if path.is_none() {
         // Try to auto-discover the URL
         if let Some(url) = resolve_package_url(pkg_spec) {
-            println!(
-                "  {} Resolved to {}",
-                style("→").dim(),
-                style(&url).dim()
-            );
+            println!("  {} Resolved to {}", style("→").dim(), style(&url).dim());
             Some(url)
         } else {
             None
@@ -496,12 +484,19 @@ pub async fn add(
              gust add {} --git <url>\n  \
              gust add apple/{}\n  \
              gust add vapor/{}",
-            name, name, name, name
+            name,
+            name,
+            name,
+            name
         ));
     };
 
     // Find or create the dependencies section
-    let section = if dev { "[dev-dependencies]" } else { "[dependencies]" };
+    let section = if dev {
+        "[dev-dependencies]"
+    } else {
+        "[dependencies]"
+    };
 
     let new_content = if content.contains(section) {
         // Add to existing section
@@ -553,7 +548,11 @@ pub async fn add(
         "{} Added {} to {}",
         style("✓").green().bold(),
         style(name).cyan(),
-        if dev { "dev-dependencies" } else { "dependencies" }
+        if dev {
+            "dev-dependencies"
+        } else {
+            "dependencies"
+        }
     );
 
     // Offer to install
@@ -679,7 +678,10 @@ pub async fn update(package: Option<&str>, breaking: bool) -> Result<()> {
         return Ok(());
     }
 
-    ui::info(format!("Checking {} package(s) for updates...", packages_to_check.len()));
+    ui::info(format!(
+        "Checking {} package(s) for updates...",
+        packages_to_check.len()
+    ));
 
     // Check for updates using shared helper
     let all_updates = check_all_for_updates(&packages_to_check).await;
@@ -694,7 +696,10 @@ pub async fn update(package: Option<&str>, breaking: bool) -> Result<()> {
 
     if updates.is_empty() {
         ui::success("No non-breaking updates available");
-        println!("  Run {} to include breaking changes", pkg("gust update --breaking"));
+        println!(
+            "  Run {} to include breaking changes",
+            pkg("gust update --breaking")
+        );
         return Ok(());
     }
 
@@ -708,7 +713,12 @@ pub async fn update(package: Option<&str>, breaking: bool) -> Result<()> {
     separator(60);
 
     for u in &updates {
-        println!("{:<30} {:<15} {}", pkg(&u.name), dim(&u.current), green(&u.latest_tag));
+        println!(
+            "{:<30} {:<15} {}",
+            pkg(&u.name),
+            dim(&u.current),
+            green(&u.latest_tag)
+        );
         update_manifest_tag(&mut manifest_content, &u.name, &u.latest_tag);
     }
 
@@ -729,7 +739,10 @@ pub async fn update(package: Option<&str>, breaking: bool) -> Result<()> {
 
     println!();
     ui::success(format!("Updated {} package(s)", updates.len()));
-    ui::hint(format!("Run {} to install the updates", pkg("gust install")));
+    ui::hint(format!(
+        "Run {} to install the updates",
+        pkg("gust install")
+    ));
 
     Ok(())
 }
@@ -744,7 +757,9 @@ fn update_manifest_tag(content: &mut String, name: &str, new_tag: &str) {
     for pattern in &patterns {
         if let Some(start_idx) = content.find(pattern) {
             let line_start = content[..start_idx].rfind('\n').map_or(0, |i| i + 1);
-            let line_end = content[start_idx..].find('\n').map_or(content.len(), |i| start_idx + i);
+            let line_end = content[start_idx..]
+                .find('\n')
+                .map_or(content.len(), |i| start_idx + i);
             let line = &content[line_start..line_end];
 
             if let Some(tag_start) = line.find("tag = \"") {
@@ -912,7 +927,11 @@ pub async fn cache_clean(all: bool, binary_only: bool) -> Result<()> {
                 );
             }
             Err(e) => {
-                println!("{} Failed to clear binary cache: {}", style("!").yellow(), e);
+                println!(
+                    "{} Failed to clear binary cache: {}",
+                    style("!").yellow(),
+                    e
+                );
             }
         }
 
@@ -946,10 +965,7 @@ pub async fn cache_clean(all: bool, binary_only: bool) -> Result<()> {
             let _ = manifest_cache.clear();
         }
     } else {
-        println!(
-            "{} Removing unused packages...",
-            style("→").blue().bold()
-        );
+        println!("{} Removing unused packages...", style("→").blue().bold());
         // TODO: Implement unused package cleanup (track last access time)
     }
 
@@ -1016,7 +1032,11 @@ pub async fn info(package: &str) -> Result<()> {
     match client.list_versions(scope, name).await {
         Ok(versions) => {
             println!("\n{} {}.{}", style("Package:").bold(), scope, name);
-            println!("{} {} versions available", style("Versions:").bold(), versions.releases.len());
+            println!(
+                "{} {} versions available",
+                style("Versions:").bold(),
+                versions.releases.len()
+            );
 
             let mut version_list: Vec<_> = versions.releases.keys().collect();
             version_list.sort();
@@ -1028,7 +1048,11 @@ pub async fn info(package: &str) -> Result<()> {
             }
 
             if version_list.len() > 5 {
-                println!("  {} ... and {} more", style("").dim(), version_list.len() - 5);
+                println!(
+                    "  {} ... and {} more",
+                    style("").dim(),
+                    version_list.len() - 5
+                );
             }
         }
         Err(e) => {
@@ -1089,10 +1113,7 @@ pub async fn search(query: &str, limit: usize) -> Result<()> {
             style(org).dim(),
             style(name).cyan().bold()
         );
-        println!(
-            "    {}",
-            style(format!("gust add {}/{}", org, name)).dim()
-        );
+        println!("    {}", style(format!("gust add {}/{}", org, name)).dim());
     }
 
     if matches.len() > limit {
@@ -1111,8 +1132,7 @@ pub async fn swift_list() -> Result<()> {
     println!("{}", style("Installed Swift versions:").bold());
 
     // Check Xcode toolchains
-    let toolchain_dir = dirs::home_dir()
-        .map(|h| h.join("Library/Developer/Toolchains"));
+    let toolchain_dir = dirs::home_dir().map(|h| h.join("Library/Developer/Toolchains"));
 
     if let Some(dir) = toolchain_dir {
         if dir.exists() {
@@ -1130,8 +1150,7 @@ pub async fn swift_list() -> Result<()> {
     }
 
     // Check swiftenv
-    let swiftenv_dir = dirs::home_dir()
-        .map(|h| h.join(".swiftenv/versions"));
+    let swiftenv_dir = dirs::home_dir().map(|h| h.join(".swiftenv/versions"));
 
     if let Some(dir) = swiftenv_dir {
         if dir.exists() {
@@ -1167,10 +1186,7 @@ pub async fn swift_current() -> Result<()> {
             style(first_line).cyan()
         );
     } else {
-        println!(
-            "{} Swift not found in PATH",
-            style("!").yellow().bold()
-        );
+        println!("{} Swift not found in PATH", style("!").yellow().bold());
     }
 
     Ok(())
@@ -1192,11 +1208,7 @@ pub async fn swift_install(version: &str) -> Result<()> {
             .into_diagnostic()?;
 
         if status.success() {
-            println!(
-                "{} Installed Swift {}",
-                style("✓").green().bold(),
-                version
-            );
+            println!("{} Installed Swift {}", style("✓").green().bold(), version);
         } else {
             return Err(miette::miette!("Failed to install Swift {}", version));
         }
@@ -1273,10 +1285,7 @@ pub async fn xcode_generate(open: bool) -> Result<()> {
     if !status.success() {
         // If no Package.swift exists, create a temporary one
         if manifest_type == gust_manifest::ManifestType::GustToml {
-            println!(
-                "  {} Creating temporary Package.swift",
-                style("→").dim()
-            );
+            println!("  {} Creating temporary Package.swift", style("→").dim());
 
             let package_swift = generate_package_swift(&manifest);
             let package_path = cwd.join("Package.swift");
@@ -1367,10 +1376,7 @@ fn generate_package_swift(manifest: &Manifest) -> String {
                 ));
             }
             TargetType::Library => {
-                out.push_str(&format!(
-                    "        .target(name: \"{}\"),\n",
-                    target.name
-                ));
+                out.push_str(&format!("        .target(name: \"{}\"),\n", target.name));
             }
             TargetType::Test => {
                 out.push_str(&format!(
@@ -1431,7 +1437,10 @@ pub async fn doctor() -> Result<()> {
                 println!("{} {}", style("✓").green(), path.trim());
             }
             _ => {
-                println!("{} not found (run: xcode-select --install)", style("✗").red());
+                println!(
+                    "{} not found (run: xcode-select --install)",
+                    style("✗").red()
+                );
                 issues += 1;
             }
         }
@@ -1458,7 +1467,12 @@ pub async fn doctor() -> Result<()> {
     let cwd = env::current_dir().into_diagnostic()?;
     if cwd.join("Gust.toml").exists() {
         let (manifest, _) = find_manifest(&cwd).into_diagnostic()?;
-        println!("{} {} v{}", style("✓").green(), manifest.package.name, manifest.package.version);
+        println!(
+            "{} {} v{}",
+            style("✓").green(),
+            manifest.package.name,
+            manifest.package.version
+        );
     } else if cwd.join("Package.swift").exists() {
         println!(
             "{} Package.swift found (run {} to convert)",
@@ -1471,16 +1485,9 @@ pub async fn doctor() -> Result<()> {
 
     println!();
     if issues == 0 {
-        println!(
-            "{} All checks passed!",
-            style("✓").green().bold()
-        );
+        println!("{} All checks passed!", style("✓").green().bold());
     } else {
-        println!(
-            "{} {} issue(s) found",
-            style("!").yellow().bold(),
-            issues
-        );
+        println!("{} {} issue(s) found", style("!").yellow().bold(), issues);
     }
 
     Ok(())

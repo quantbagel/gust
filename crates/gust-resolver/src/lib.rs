@@ -1,13 +1,16 @@
 //! PubGrub-based dependency resolution for Gust.
 
-use std::collections::HashMap;
 use gust_types::{Dependency, Manifest, Version, VersionReq};
+use std::collections::HashMap;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum ResolveError {
     #[error("No version of {package} satisfies {requirement}")]
-    NoMatchingVersion { package: String, requirement: String },
+    NoMatchingVersion {
+        package: String,
+        requirement: String,
+    },
 
     #[error("Version conflict for {package}: {conflicts:?}")]
     VersionConflict {
@@ -75,9 +78,7 @@ impl<P: VersionProvider> Resolver<P> {
         let mut queue: Vec<(String, VersionReq)> = manifest
             .dependencies
             .iter()
-            .filter_map(|(name, dep)| {
-                dep.version.as_ref().map(|v| (name.clone(), v.clone()))
-            })
+            .filter_map(|(name, dep)| dep.version.as_ref().map(|v| (name.clone(), v.clone())))
             .collect();
 
         let mut visited = std::collections::HashSet::new();

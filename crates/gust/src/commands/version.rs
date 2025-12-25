@@ -60,9 +60,9 @@ pub async fn check_all_for_updates(packages: &[&LockedPackage]) -> Vec<OutdatedP
     for pkg in packages {
         if pkg.git.is_some() {
             let pkg_clone = (*pkg).clone();
-            tasks.push(tokio::spawn(async move {
-                check_for_update(&pkg_clone).await
-            }));
+            tasks.push(tokio::spawn(
+                async move { check_for_update(&pkg_clone).await },
+            ));
         }
     }
 
@@ -78,7 +78,10 @@ pub async fn check_all_for_updates(packages: &[&LockedPackage]) -> Vec<OutdatedP
 
 /// Filter updates by semver compatibility.
 /// If `allow_breaking` is false, only returns updates within same major version.
-pub fn filter_breaking(updates: Vec<OutdatedPackage>, allow_breaking: bool) -> Vec<OutdatedPackage> {
+pub fn filter_breaking(
+    updates: Vec<OutdatedPackage>,
+    allow_breaking: bool,
+) -> Vec<OutdatedPackage> {
     if allow_breaking {
         return updates;
     }

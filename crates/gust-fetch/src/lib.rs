@@ -1,9 +1,9 @@
 //! Parallel package fetching for Gust.
 
+use gust_types::Dependency;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::Arc;
-use gust_types::Dependency;
 use thiserror::Error;
 use tokio::sync::Semaphore;
 
@@ -161,11 +161,10 @@ impl Fetcher {
         let name = dep.name.clone();
 
         // Use git command for better compatibility with annotated tags
-        let (revision, checksum) = tokio::task::spawn_blocking(move || {
-            clone_with_git(&url, &dest_clone, branch, tag)
-        })
-        .await
-        .map_err(|e| FetchError::GitError(format!("Task join error: {}", e)))??;
+        let (revision, checksum) =
+            tokio::task::spawn_blocking(move || clone_with_git(&url, &dest_clone, branch, tag))
+                .await
+                .map_err(|e| FetchError::GitError(format!("Task join error: {}", e)))??;
 
         Ok(FetchResult {
             name,
@@ -188,7 +187,10 @@ impl Fetcher {
     }
 
     /// Static version of fetch_path for use in spawned tasks.
-    async fn fetch_path_static(dep: &Dependency, dest: &PathBuf) -> Result<FetchResult, FetchError> {
+    async fn fetch_path_static(
+        dep: &Dependency,
+        dest: &PathBuf,
+    ) -> Result<FetchResult, FetchError> {
         let src = dep.path.as_ref().ok_or_else(|| FetchError::FetchFailed {
             package: dep.name.clone(),
             message: "No path specified".to_string(),
@@ -233,7 +235,11 @@ impl Fetcher {
         })
     }
 
-    async fn fetch_path(&self, dep: &Dependency, dest: &PathBuf) -> Result<FetchResult, FetchError> {
+    async fn fetch_path(
+        &self,
+        dep: &Dependency,
+        dest: &PathBuf,
+    ) -> Result<FetchResult, FetchError> {
         let src = dep.path.as_ref().ok_or_else(|| FetchError::FetchFailed {
             package: dep.name.clone(),
             message: "No path specified".to_string(),
@@ -372,7 +378,10 @@ fn clone_with_git(
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(FetchError::GitError(format!("git clone failed: {}", stderr)));
+        return Err(FetchError::GitError(format!(
+            "git clone failed: {}",
+            stderr
+        )));
     }
 
     // Get the HEAD revision
@@ -382,7 +391,9 @@ fn clone_with_git(
         .output()
         .map_err(|e| FetchError::GitError(format!("Failed to get revision: {}", e)))?;
 
-    let revision = String::from_utf8_lossy(&rev_output.stdout).trim().to_string();
+    let revision = String::from_utf8_lossy(&rev_output.stdout)
+        .trim()
+        .to_string();
 
     // Compute checksum
     let checksum = compute_dir_hash(&dest.to_path_buf())?;
@@ -418,18 +429,12 @@ fn clone_with_gix(
     if let Some(ref tag_name) = tag {
         let refspec_str = format!("+refs/tags/{0}:refs/tags/{0}", tag_name);
         prepare = prepare.configure_remote(move |remote| {
-            Ok(remote.with_refspecs(
-                Some(refspec_str.as_str()),
-                gix::remote::Direction::Fetch,
-            )?)
+            Ok(remote.with_refspecs(Some(refspec_str.as_str()), gix::remote::Direction::Fetch)?)
         });
     } else if let Some(ref branch_name) = branch {
         let refspec_str = format!("+refs/heads/{0}:refs/remotes/origin/{0}", branch_name);
         prepare = prepare.configure_remote(move |remote| {
-            Ok(remote.with_refspecs(
-                Some(refspec_str.as_str()),
-                gix::remote::Direction::Fetch,
-            )?)
+            Ok(remote.with_refspecs(Some(refspec_str.as_str()), gix::remote::Direction::Fetch)?)
         });
     }
 
@@ -445,8 +450,8 @@ fn clone_with_gix(
         .map_err(|e| FetchError::GitError(format!("Failed to checkout: {}", e)))?;
 
     // Open the repo to get HEAD
-    let repo = gix::open(dest)
-        .map_err(|e| FetchError::GitError(format!("Failed to open repo: {}", e)))?;
+    let repo =
+        gix::open(dest).map_err(|e| FetchError::GitError(format!("Failed to open repo: {}", e)))?;
 
     let head = repo
         .head_id()

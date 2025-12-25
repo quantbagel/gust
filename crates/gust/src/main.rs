@@ -265,13 +265,21 @@ async fn main() -> Result<()> {
     }
 
     match cli.command {
-        Commands::New { name, r#type, no_git } => {
+        Commands::New {
+            name,
+            r#type,
+            no_git,
+        } => {
             commands::new_package(&name, &r#type, no_git).await?;
         }
         Commands::Init { name, r#type } => {
             commands::init(name.as_deref(), &r#type).await?;
         }
-        Commands::Build { release, target, no_cache } => {
+        Commands::Build {
+            release,
+            target,
+            no_cache,
+        } => {
             commands::build(release, target.as_deref(), cli.global.jobs, no_cache).await?;
         }
         Commands::Run { target, args } => {
@@ -283,8 +291,23 @@ async fn main() -> Result<()> {
         Commands::Clean { deps } => {
             commands::clean(deps).await?;
         }
-        Commands::Add { package, git, branch, tag, path, dev } => {
-            commands::add(&package, git.as_deref(), branch.as_deref(), tag.as_deref(), path.as_deref(), dev).await?;
+        Commands::Add {
+            package,
+            git,
+            branch,
+            tag,
+            path,
+            dev,
+        } => {
+            commands::add(
+                &package,
+                git.as_deref(),
+                branch.as_deref(),
+                tag.as_deref(),
+                path.as_deref(),
+                dev,
+            )
+            .await?;
         }
         Commands::Remove { package } => {
             commands::remove(&package).await?;

@@ -50,7 +50,12 @@ impl ManifestCache {
     pub fn clear(&self) -> io::Result<()> {
         for entry in fs::read_dir(&self.cache_dir)? {
             let entry = entry?;
-            if entry.path().extension().map(|e| e == "json").unwrap_or(false) {
+            if entry
+                .path()
+                .extension()
+                .map(|e| e == "json")
+                .unwrap_or(false)
+            {
                 fs::remove_file(entry.path())?;
             }
         }
@@ -64,7 +69,12 @@ impl ManifestCache {
 
         for entry in fs::read_dir(&self.cache_dir)? {
             let entry = entry?;
-            if entry.path().extension().map(|e| e == "json").unwrap_or(false) {
+            if entry
+                .path()
+                .extension()
+                .map(|e| e == "json")
+                .unwrap_or(false)
+            {
                 count += 1;
                 size += entry.metadata()?.len();
             }

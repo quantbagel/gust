@@ -68,12 +68,18 @@ impl GlobalCache {
 
     /// Get the content-addressed files directory.
     pub fn files_dir(&self) -> PathBuf {
-        self.root.join("store").join(format!("v{}", self.version)).join("files")
+        self.root
+            .join("store")
+            .join(format!("v{}", self.version))
+            .join("files")
     }
 
     /// Get the packages metadata directory.
     pub fn packages_dir(&self) -> PathBuf {
-        self.root.join("store").join(format!("v{}", self.version)).join("packages")
+        self.root
+            .join("store")
+            .join(format!("v{}", self.version))
+            .join("packages")
     }
 
     /// Get the git repositories directory.
@@ -201,13 +207,14 @@ pub struct PackageMetadata {
 impl PackageMetadata {
     /// Save metadata to the cache.
     pub fn save(&self, cache: &GlobalCache) -> Result<(), CacheError> {
-        let dir = cache.packages_dir().join(format!("{}@{}", self.name, self.version));
+        let dir = cache
+            .packages_dir()
+            .join(format!("{}@{}", self.name, self.version));
         fs::create_dir_all(&dir).map_err(CacheError::CreateDirError)?;
 
         let path = dir.join("metadata.json");
-        let content = serde_json::to_string_pretty(self).map_err(|e| {
-            CacheError::WriteError(io::Error::new(io::ErrorKind::InvalidData, e))
-        })?;
+        let content = serde_json::to_string_pretty(self)
+            .map_err(|e| CacheError::WriteError(io::Error::new(io::ErrorKind::InvalidData, e)))?;
         fs::write(path, content).map_err(CacheError::WriteError)?;
 
         info!("Saved metadata for {}@{}", self.name, self.version);
@@ -222,9 +229,8 @@ impl PackageMetadata {
             .join("metadata.json");
 
         let content = fs::read_to_string(&path).map_err(CacheError::ReadError)?;
-        serde_json::from_str(&content).map_err(|e| {
-            CacheError::ReadError(io::Error::new(io::ErrorKind::InvalidData, e))
-        })
+        serde_json::from_str(&content)
+            .map_err(|e| CacheError::ReadError(io::Error::new(io::ErrorKind::InvalidData, e)))
     }
 }
 

@@ -33,10 +33,7 @@ pub enum GustError {
     PackageNotFound { name: String, suggestion: String },
 
     #[error("Version conflict for {package}")]
-    #[diagnostic(
-        code(gust::resolve::version_conflict),
-        help("{help}")
-    )]
+    #[diagnostic(code(gust::resolve::version_conflict), help("{help}"))]
     VersionConflict {
         package: String,
         required: Vec<String>,

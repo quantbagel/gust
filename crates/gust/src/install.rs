@@ -3,17 +3,17 @@
 //! Coordinates: manifest → resolve → fetch → cache → link
 
 use console::style;
+use gust_cache::GlobalCache;
+use gust_fetch::{FetchResult, FetchStatus, Fetcher};
+use gust_lockfile::{LockedPackage, Lockfile, LockfileDiff};
+use gust_manifest::{find_manifest, parse_transitive_deps};
+use gust_resolver::{Resolution, ResolvedDep};
+use gust_types::{Dependency, DependencySource, Manifest};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use miette::{IntoDiagnostic, Result};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use gust_cache::GlobalCache;
-use gust_fetch::{FetchResult, FetchStatus, Fetcher};
-use gust_lockfile::{LockedPackage, Lockfile, LockfileDiff};
-use gust_manifest::{find_manifest, parse_transitive_deps};
-use gust_resolver::{ResolvedDep, Resolution};
-use gust_types::{Dependency, DependencySource, Manifest};
 
 /// Installation options.
 #[derive(Debug, Clone, Default)]
@@ -80,7 +80,9 @@ impl Installer {
         };
 
         // Step 3: Resolve dependencies (with parallel transitive parsing)
-        let resolution = self.resolve(&manifest, existing_lockfile.as_ref(), &mp).await?;
+        let resolution = self
+            .resolve(&manifest, existing_lockfile.as_ref(), &mp)
+            .await?;
         let pkg_count = resolution.packages.len();
 
         println!(
@@ -193,7 +195,10 @@ impl Installer {
             let depth_msg = if iteration == 1 {
                 format!("Resolving {} direct dependencies", count)
             } else {
-                format!("Resolving {} transitive dependencies (depth {})", count, iteration)
+                format!(
+                    "Resolving {} transitive dependencies (depth {})",
+                    count, iteration
+                )
             };
 
             let spinner = mp.add(ProgressBar::new_spinner());
@@ -220,10 +225,7 @@ impl Installer {
 
             // Fetch packages in parallel
             if !to_fetch.is_empty() {
-                let _results = self
-                    .fetcher
-                    .fetch_many(to_fetch, |_name, _status| {})
-                    .await;
+                let _results = self.fetcher.fetch_many(to_fetch, |_name, _status| {}).await;
             }
 
             // Collect paths for parsing
@@ -236,7 +238,8 @@ impl Installer {
                 .collect();
 
             // Parse all fetched manifests in parallel
-            let (parsed, discovered) = parse_transitive_deps(parse_dirs, self.options.concurrency).await;
+            let (parsed, discovered) =
+                parse_transitive_deps(parse_dirs, self.options.concurrency).await;
 
             // Add resolved packages
             for parsed_dep in &parsed {
@@ -300,11 +303,7 @@ impl Installer {
                 }
             }
 
-            spinner.finish_with_message(format!(
-                "{} {}",
-                style("✓").green(),
-                depth_msg
-            ));
+            spinner.finish_with_message(format!("{} {}", style("✓").green(), depth_msg));
         }
 
         if iteration >= MAX_ITERATIONS {
@@ -610,7 +609,13 @@ impl Installer {
 /// Sanitize a package name for use as a directory name.
 fn sanitize_name(name: &str) -> String {
     name.chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 

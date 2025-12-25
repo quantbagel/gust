@@ -2,11 +2,11 @@
 //!
 //! Supports binary artifact caching for near-instant rebuilds.
 
-use std::path::{Path, PathBuf};
-use std::process::Stdio;
-use gust_binary_cache::{hash_sources, LocalBinaryCache, BuildFingerprint};
+use gust_binary_cache::{hash_sources, BuildFingerprint, LocalBinaryCache};
 use gust_platform::SwiftToolchain;
 use gust_types::{BuildConfiguration, Manifest};
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use thiserror::Error;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
@@ -186,10 +186,13 @@ impl Builder {
             None
         };
 
-        let build_dir = self.project_dir.join(".build").join(match options.configuration {
-            BuildConfiguration::Debug => "debug",
-            BuildConfiguration::Release => "release",
-        });
+        let build_dir = self
+            .project_dir
+            .join(".build")
+            .join(match options.configuration {
+                BuildConfiguration::Debug => "debug",
+                BuildConfiguration::Release => "release",
+            });
 
         // Check cache for existing build
         if options.use_cache && !options.force_rebuild {
@@ -272,9 +275,7 @@ impl Builder {
         let status = child.wait().await?;
 
         if !status.success() {
-            return Err(BuildError::BuildFailed(
-                "swift build failed".to_string(),
-            ));
+            return Err(BuildError::BuildFailed("swift build failed".to_string()));
         }
 
         let duration = start.elapsed().as_secs_f64();
@@ -310,7 +311,9 @@ impl Builder {
         let status = cmd.status().await?;
 
         if !status.success() {
-            return Err(BuildError::BuildFailed("swift package clean failed".to_string()));
+            return Err(BuildError::BuildFailed(
+                "swift package clean failed".to_string(),
+            ));
         }
 
         Ok(())

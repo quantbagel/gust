@@ -40,10 +40,15 @@ impl RegistryClient {
     }
 
     /// List all versions of a package.
-    pub async fn list_versions(&self, scope: &str, name: &str) -> Result<PackageVersions, RegistryError> {
+    pub async fn list_versions(
+        &self,
+        scope: &str,
+        name: &str,
+    ) -> Result<PackageVersions, RegistryError> {
         let url = format!("{}/{}/{}", self.base_url, scope, name);
 
-        let resp = self.client
+        let resp = self
+            .client
             .get(&url)
             .header("Accept", "application/vnd.swift.registry.v1+json")
             .send()
@@ -66,7 +71,8 @@ impl RegistryClient {
     ) -> Result<PackageRelease, RegistryError> {
         let url = format!("{}/{}/{}/{}", self.base_url, scope, name, version);
 
-        let resp = self.client
+        let resp = self
+            .client
             .get(&url)
             .header("Accept", "application/vnd.swift.registry.v1+json")
             .send()
@@ -90,9 +96,13 @@ impl RegistryClient {
         name: &str,
         version: &str,
     ) -> Result<String, RegistryError> {
-        let url = format!("{}/{}/{}/{}/Package.swift", self.base_url, scope, name, version);
+        let url = format!(
+            "{}/{}/{}/{}/Package.swift",
+            self.base_url, scope, name, version
+        );
 
-        let resp = self.client
+        let resp = self
+            .client
             .get(&url)
             .header("Accept", "text/x-swift")
             .send()
@@ -118,7 +128,8 @@ impl RegistryClient {
     ) -> Result<Vec<u8>, RegistryError> {
         let url = format!("{}/{}/{}/{}.zip", self.base_url, scope, name, version);
 
-        let resp = self.client
+        let resp = self
+            .client
             .get(&url)
             .header("Accept", "application/zip")
             .send()
@@ -137,9 +148,14 @@ impl RegistryClient {
 
     /// Lookup package identifiers from a repository URL.
     pub async fn lookup_by_url(&self, url: &str) -> Result<Vec<PackageIdentifier>, RegistryError> {
-        let lookup_url = format!("{}/identifiers?url={}", self.base_url, urlencoding::encode(url));
+        let lookup_url = format!(
+            "{}/identifiers?url={}",
+            self.base_url,
+            urlencoding::encode(url)
+        );
 
-        let resp = self.client
+        let resp = self
+            .client
             .get(&lookup_url)
             .header("Accept", "application/vnd.swift.registry.v1+json")
             .send()

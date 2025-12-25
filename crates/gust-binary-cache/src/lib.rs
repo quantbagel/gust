@@ -4,11 +4,11 @@
 //! Supports both local disk cache and remote artifact servers.
 
 use blake3::Hasher;
+use gust_types::BuildConfiguration;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use gust_types::BuildConfiguration;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -142,11 +142,7 @@ impl BinaryCacheClient {
     }
 
     /// Download and extract an artifact.
-    pub async fn pull(
-        &self,
-        fingerprint: &str,
-        dest: &Path,
-    ) -> Result<(), BinaryCacheError> {
+    pub async fn pull(&self, fingerprint: &str, dest: &Path) -> Result<(), BinaryCacheError> {
         let url = format!("{}/artifacts/{}", self.base_url, fingerprint);
         let resp = self.client.get(&url).send().await?;
 
@@ -233,10 +229,12 @@ impl LocalBinaryCache {
     pub fn open() -> Result<Self, BinaryCacheError> {
         let cache_dir = directories::ProjectDirs::from("dev", "gust", "gust")
             .map(|d| d.cache_dir().join("binary-cache"))
-            .ok_or_else(|| BinaryCacheError::IoError(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "Could not determine cache directory",
-            )))?;
+            .ok_or_else(|| {
+                BinaryCacheError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::NotFound,
+                    "Could not determine cache directory",
+                ))
+            })?;
 
         fs::create_dir_all(&cache_dir)?;
         Ok(Self { cache_dir })
@@ -244,7 +242,9 @@ impl LocalBinaryCache {
 
     /// Check if an artifact exists in the cache.
     pub fn contains(&self, fingerprint: &str) -> bool {
-        self.cache_dir.join(format!("{}.tar.zst", fingerprint)).exists()
+        self.cache_dir
+            .join(format!("{}.tar.zst", fingerprint))
+            .exists()
     }
 
     /// Get the path to a cached artifact.
@@ -259,7 +259,8 @@ impl LocalBinaryCache {
 
     /// Restore cached artifacts to a destination directory.
     pub fn restore(&self, fingerprint: &str, dest: &Path) -> Result<(), BinaryCacheError> {
-        let archive_path = self.get(fingerprint)
+        let archive_path = self
+            .get(fingerprint)
             .ok_or_else(|| BinaryCacheError::CacheMiss(fingerprint.to_string()))?;
 
         let compressed = fs::read(&archive_path)?;
@@ -322,7 +323,12 @@ impl LocalBinaryCache {
         if self.cache_dir.exists() {
             for entry in fs::read_dir(&self.cache_dir)? {
                 let entry = entry?;
-                if entry.path().extension().map(|e| e == "zst").unwrap_or(false) {
+                if entry
+                    .path()
+                    .extension()
+                    .map(|e| e == "zst")
+                    .unwrap_or(false)
+                {
                     count += 1;
                     total_size += entry.metadata()?.len();
                 }
@@ -339,7 +345,12 @@ impl LocalBinaryCache {
         if self.cache_dir.exists() {
             for entry in fs::read_dir(&self.cache_dir)? {
                 let entry = entry?;
-                if entry.path().extension().map(|e| e == "zst").unwrap_or(false) {
+                if entry
+                    .path()
+                    .extension()
+                    .map(|e| e == "zst")
+                    .unwrap_or(false)
+                {
                     fs::remove_file(entry.path())?;
                     cleared += 1;
                 }
@@ -452,7 +463,10 @@ pub fn hash_sources(dir: &Path) -> Result<String, BinaryCacheError> {
 }
 
 /// Hash a target's source files specifically.
-pub fn hash_target_sources(project_dir: &Path, target_name: &str) -> Result<String, BinaryCacheError> {
+pub fn hash_target_sources(
+    project_dir: &Path,
+    target_name: &str,
+) -> Result<String, BinaryCacheError> {
     // Try common source directory patterns
     let possible_dirs = [
         project_dir.join("Sources").join(target_name),
