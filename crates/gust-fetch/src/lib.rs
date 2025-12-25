@@ -56,7 +56,12 @@ impl Default for Fetcher {
 
 impl Fetcher {
     pub fn new() -> Self {
-        Self { concurrency: 8 }
+        // Use available parallelism (optimized for Apple Silicon's many cores)
+        // Falls back to 8 if detection fails
+        let concurrency = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(8);
+        Self { concurrency }
     }
 
     pub fn with_concurrency(mut self, n: usize) -> Self {
@@ -138,6 +143,7 @@ impl Fetcher {
     }
 
     /// Static version of fetch_git for use in spawned tasks.
+    /// Uses native gix library instead of shelling out to git for better performance.
     async fn fetch_git_static(dep: &Dependency, dest: &PathBuf) -> Result<FetchResult, FetchError> {
         let url = dep.git.as_ref().ok_or_else(|| FetchError::FetchFailed {
             package: dep.name.clone(),
@@ -146,44 +152,23 @@ impl Fetcher {
 
         tracing::info!("Fetching {} from {}", dep.name, url);
 
-        // Build git clone command with appropriate options
-        let mut cmd = tokio::process::Command::new("git");
-        cmd.args(["clone", "--depth", "1", "--single-branch"]);
+        let url = url.clone();
+        let dest_clone = dest.clone();
+        let dest_result = dest.clone();
+        let branch = dep.branch.clone();
+        let tag = dep.tag.clone();
+        let name = dep.name.clone();
 
-        // Add branch/tag if specified
-        if let Some(ref branch) = dep.branch {
-            cmd.args(["--branch", branch]);
-        } else if let Some(ref tag) = dep.tag {
-            cmd.args(["--branch", tag]);
-        }
-
-        cmd.arg(url).arg(dest);
-
-        let output = cmd.output().await?;
-
-        if !output.status.success() {
-            return Err(FetchError::GitError(
-                String::from_utf8_lossy(&output.stderr).to_string(),
-            ));
-        }
-
-        // Get the current revision
-        let rev_output = tokio::process::Command::new("git")
-            .args(["rev-parse", "HEAD"])
-            .current_dir(dest)
-            .output()
-            .await?;
-
-        let revision = String::from_utf8_lossy(&rev_output.stdout)
-            .trim()
-            .to_string();
-
-        // Compute checksum of the checkout
-        let checksum = compute_dir_hash(dest)?;
+        // Run gix clone in a blocking task (gix is synchronous)
+        let (revision, checksum) = tokio::task::spawn_blocking(move || {
+            clone_with_gix(&url, &dest_clone, branch, tag)
+        })
+        .await
+        .map_err(|e| FetchError::GitError(format!("Task join error: {}", e)))??;
 
         Ok(FetchResult {
-            name: dep.name.clone(),
-            path: dest.clone(),
+            name,
+            path: dest_result,
             checksum,
             revision: Some(revision),
         })
@@ -230,47 +215,8 @@ impl Fetcher {
     }
 
     async fn fetch_git(&self, dep: &Dependency, dest: &PathBuf) -> Result<FetchResult, FetchError> {
-        let url = dep.git.as_ref().ok_or_else(|| FetchError::FetchFailed {
-            package: dep.name.clone(),
-            message: "No git URL".to_string(),
-        })?;
-
-        tracing::info!("Fetching {} from {}", dep.name, url);
-
-        // For now, shell out to git (gix would be better for a real impl)
-        let output = tokio::process::Command::new("git")
-            .args(["clone", "--depth", "1"])
-            .arg(url)
-            .arg(dest)
-            .output()
-            .await?;
-
-        if !output.status.success() {
-            return Err(FetchError::GitError(
-                String::from_utf8_lossy(&output.stderr).to_string(),
-            ));
-        }
-
-        // Get the current revision
-        let rev_output = tokio::process::Command::new("git")
-            .args(["rev-parse", "HEAD"])
-            .current_dir(dest)
-            .output()
-            .await?;
-
-        let revision = String::from_utf8_lossy(&rev_output.stdout)
-            .trim()
-            .to_string();
-
-        // Compute checksum of the checkout
-        let checksum = compute_dir_hash(dest)?;
-
-        Ok(FetchResult {
-            name: dep.name.clone(),
-            path: dest.clone(),
-            checksum,
-            revision: Some(revision),
-        })
+        // Delegate to static version which uses native gix
+        Self::fetch_git_static(dep, dest).await
     }
 
     async fn fetch_registry(
@@ -315,13 +261,19 @@ impl Fetcher {
 }
 
 fn compute_dir_hash(path: &PathBuf) -> Result<String, FetchError> {
-    // Simple implementation: hash all file contents
+    use rayon::prelude::*;
     use std::collections::BTreeMap;
     use std::fs;
+    use std::path::PathBuf;
 
-    let mut file_hashes: BTreeMap<String, String> = BTreeMap::new();
+    // First, collect all file paths (single-threaded, fast)
+    let mut files: Vec<(String, PathBuf)> = Vec::new();
 
-    fn visit_dir(dir: &std::path::Path, prefix: &str, hashes: &mut BTreeMap<String, String>) -> Result<(), FetchError> {
+    fn collect_files(
+        dir: &std::path::Path,
+        prefix: &str,
+        files: &mut Vec<(String, PathBuf)>,
+    ) -> Result<(), FetchError> {
         if dir.is_dir() {
             for entry in fs::read_dir(dir)? {
                 let entry = entry?;
@@ -340,18 +292,40 @@ fn compute_dir_hash(path: &PathBuf) -> Result<String, FetchError> {
                 };
 
                 if path.is_dir() {
-                    visit_dir(&path, &key, hashes)?;
+                    collect_files(&path, &key, files)?;
                 } else {
-                    let content = fs::read(&path)?;
-                    let hash = blake3::hash(&content).to_hex().to_string();
-                    hashes.insert(key, hash);
+                    files.push((key, path));
                 }
             }
         }
         Ok(())
     }
 
-    visit_dir(path.as_path(), "", &mut file_hashes)?;
+    collect_files(path.as_path(), "", &mut files)?;
+
+    // Parallel hash all files using rayon + mmap (Apple Silicon optimization)
+    // mmap provides zero-copy reads directly from the kernel page cache
+    let file_hashes: Result<BTreeMap<String, String>, FetchError> = files
+        .par_iter()
+        .map(|(key, path)| {
+            let file = fs::File::open(path)?;
+            let metadata = file.metadata()?;
+
+            // Use mmap for files > 4KB, regular read for small files
+            let hash = if metadata.len() > 4096 {
+                // SAFETY: We only read the file, and it's not modified during hashing
+                let mmap = unsafe { memmap2::Mmap::map(&file)? };
+                blake3::hash(&mmap).to_hex().to_string()
+            } else {
+                let content = fs::read(path)?;
+                blake3::hash(&content).to_hex().to_string()
+            };
+
+            Ok((key.clone(), hash))
+        })
+        .collect();
+
+    let file_hashes = file_hashes?;
 
     // Hash all the file hashes together
     let combined: String = file_hashes
@@ -361,4 +335,67 @@ fn compute_dir_hash(path: &PathBuf) -> Result<String, FetchError> {
         .join("\n");
 
     Ok(blake3::hash(combined.as_bytes()).to_hex().to_string())
+}
+
+/// Clone a git repository using native gix library.
+/// Returns (revision, checksum) on success.
+fn clone_with_gix(
+    url: &str,
+    dest: &std::path::Path,
+    branch: Option<String>,
+    tag: Option<String>,
+) -> Result<(String, String), FetchError> {
+    use gix::remote::fetch::Shallow;
+    use std::sync::atomic::AtomicBool;
+
+    // Determine which ref to fetch
+    let refspec = branch.or(tag);
+
+    // Prepare the clone with shallow fetch (depth=1)
+    let mut prepare = gix::clone::PrepareFetch::new(
+        url,
+        dest,
+        gix::create::Kind::WithWorktree,
+        gix::create::Options::default(),
+        gix::open::Options::isolated(),
+    )
+    .map_err(|e| FetchError::GitError(format!("Failed to prepare clone: {}", e)))?
+    .with_shallow(Shallow::DepthAtRemote(1.try_into().unwrap()));
+
+    // Configure remote to fetch specific branch/tag if specified
+    if let Some(ref_name) = refspec {
+        let refspec_str = format!("+refs/heads/{0}:refs/remotes/origin/{0}", ref_name);
+        prepare = prepare.configure_remote(move |remote| {
+            Ok(remote.with_refspecs(
+                Some(refspec_str.as_str()),
+                gix::remote::Direction::Fetch,
+            )?)
+        });
+    }
+
+    // Perform the fetch
+    let should_interrupt = AtomicBool::new(false);
+    let (mut checkout, _outcome) = prepare
+        .fetch_then_checkout(gix::progress::Discard, &should_interrupt)
+        .map_err(|e| FetchError::GitError(format!("Failed to fetch: {}", e)))?;
+
+    // Checkout the worktree
+    let (_repo, _outcome) = checkout
+        .main_worktree(gix::progress::Discard, &should_interrupt)
+        .map_err(|e| FetchError::GitError(format!("Failed to checkout: {}", e)))?;
+
+    // Open the repo to get HEAD
+    let repo = gix::open(dest)
+        .map_err(|e| FetchError::GitError(format!("Failed to open repo: {}", e)))?;
+
+    let head = repo
+        .head_id()
+        .map_err(|e| FetchError::GitError(format!("Failed to get HEAD: {}", e)))?;
+
+    let revision = head.to_string();
+
+    // Compute checksum
+    let checksum = compute_dir_hash(&dest.to_path_buf())?;
+
+    Ok((revision, checksum))
 }

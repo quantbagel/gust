@@ -6,13 +6,41 @@ use miette::{IntoDiagnostic, Result};
 use std::env;
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 use gust_build::{BuildOptions, Builder};
 use gust_cache::GlobalCache;
 use gust_manifest::{find_manifest, generate_gust_toml};
 use gust_types::{BuildConfiguration, Manifest, Package, Target, TargetType, Version};
 
+/// Well-known Swift package GitHub organizations for auto-discovery
+const KNOWN_ORGS: &[(&str, &str)] = &[
+    ("vapor", "vapor"),
+    ("swift-log", "apple"),
+    ("swift-nio", "apple"),
+    ("swift-collections", "apple"),
+    ("swift-algorithms", "apple"),
+    ("swift-crypto", "apple"),
+    ("swift-system", "apple"),
+    ("swift-argument-parser", "apple"),
+    ("swift-atomics", "apple"),
+    ("swift-numerics", "apple"),
+    ("swift-async-algorithms", "apple"),
+    ("async-http-client", "swift-server"),
+    ("async-kit", "vapor"),
+    ("fluent", "vapor"),
+    ("leaf", "vapor"),
+    ("alamofire", "Alamofire"),
+    ("kingfisher", "onevcat"),
+    ("snapkit", "SnapKit"),
+    ("realm-swift", "realm"),
+    ("rxswift", "ReactiveX"),
+    ("moya", "Moya"),
+    ("swiftyjson", "SwiftyJSON"),
+    ("hero", "HeroTransitions"),
+];
+
 /// Create a new package.
-pub async fn new_package(name: &str, pkg_type: &str) -> Result<()> {
+pub async fn new_package(name: &str, pkg_type: &str, no_git: bool) -> Result<()> {
     let path = env::current_dir().into_diagnostic()?.join(name);
 
     if path.exists() {
@@ -72,6 +100,33 @@ final class {}Tests: XCTestCase {{
     );
     fs::write(test_file, test_content).into_diagnostic()?;
 
+    // Create .gitignore
+    let gitignore = r#".build/
+.swiftpm/
+*.xcodeproj
+*.xcworkspace
+DerivedData/
+Gust.lock
+"#;
+    fs::write(path.join(".gitignore"), gitignore).into_diagnostic()?;
+
+    // Initialize git repository
+    if !no_git {
+        let git_result = Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&path)
+            .status();
+
+        if let Ok(status) = git_result {
+            if status.success() {
+                println!(
+                    "{} Initialized git repository",
+                    style("✓").green()
+                );
+            }
+        }
+    }
+
     println!(
         "{} Created package {} at {}",
         style("✓").green().bold(),
@@ -79,11 +134,18 @@ final class {}Tests: XCTestCase {{
         path.display()
     );
 
+    println!("\n{}", style("Next steps:").bold());
+    println!("  cd {}", name);
+    println!("  gust build");
+    if target_type == TargetType::Executable {
+        println!("  gust run");
+    }
+
     Ok(())
 }
 
 /// Initialize a package in the current directory.
-pub async fn init(name: Option<&str>) -> Result<()> {
+pub async fn init(name: Option<&str>, pkg_type: &str) -> Result<()> {
     let cwd = env::current_dir().into_diagnostic()?;
     let pkg_name = name
         .map(String::from)
@@ -95,15 +157,60 @@ pub async fn init(name: Option<&str>) -> Result<()> {
         return Err(miette::miette!("Gust.toml already exists"));
     }
 
-    let manifest = create_manifest(&pkg_name, TargetType::Library);
+    let target_type = match pkg_type {
+        "executable" | "exe" => TargetType::Executable,
+        "library" | "lib" => TargetType::Library,
+        _ => return Err(miette::miette!("Unknown package type: {}", pkg_type)),
+    };
+
+    let manifest = create_manifest(&pkg_name, target_type);
     let toml = generate_gust_toml(&manifest);
     fs::write(&manifest_path, toml).into_diagnostic()?;
+
+    // Create source directory if it doesn't exist
+    let sources_dir = cwd.join("Sources").join(&pkg_name);
+    if !sources_dir.exists() {
+        fs::create_dir_all(&sources_dir).into_diagnostic()?;
+
+        let main_file = match target_type {
+            TargetType::Executable => sources_dir.join("main.swift"),
+            _ => sources_dir.join(format!("{}.swift", pkg_name)),
+        };
+
+        let content = match target_type {
+            TargetType::Executable => "print(\"Hello, world!\")\n".to_string(),
+            _ => format!(
+                "public struct {} {{\n    public init() {{}}\n}}\n",
+                pkg_name
+            ),
+        };
+
+        fs::write(main_file, content).into_diagnostic()?;
+        println!("{} Created source files", style("✓").green());
+    }
+
+    // Create .gitignore if it doesn't exist
+    let gitignore_path = cwd.join(".gitignore");
+    if !gitignore_path.exists() {
+        let gitignore = r#".build/
+.swiftpm/
+*.xcodeproj
+*.xcworkspace
+DerivedData/
+"#;
+        fs::write(&gitignore_path, gitignore).into_diagnostic()?;
+    }
 
     println!(
         "{} Initialized package {}",
         style("✓").green().bold(),
         style(&pkg_name).cyan()
     );
+
+    println!("\n{}", style("Next steps:").bold());
+    println!("  gust add <package>  # Add dependencies");
+    println!("  gust install        # Install dependencies");
+    println!("  gust build          # Build the package");
 
     Ok(())
 }
@@ -286,8 +393,36 @@ pub async fn clean(deps: bool) -> Result<()> {
     Ok(())
 }
 
+/// Try to resolve a package name to a GitHub URL.
+fn resolve_package_url(package: &str) -> Option<String> {
+    // Check if it's org/repo format
+    if package.contains('/') {
+        let parts: Vec<&str> = package.split('/').collect();
+        if parts.len() == 2 {
+            return Some(format!("https://github.com/{}/{}.git", parts[0], parts[1]));
+        }
+    }
+
+    // Check known packages
+    let lower = package.to_lowercase();
+    for (name, org) in KNOWN_ORGS {
+        if lower == *name {
+            return Some(format!("https://github.com/{}/{}.git", org, name));
+        }
+    }
+
+    None
+}
+
 /// Add a dependency.
-pub async fn add(package: &str, git: Option<&str>, path: Option<&Path>, dev: bool) -> Result<()> {
+pub async fn add(
+    package: &str,
+    git: Option<&str>,
+    branch: Option<&str>,
+    tag: Option<&str>,
+    path: Option<&Path>,
+    dev: bool,
+) -> Result<()> {
     let cwd = env::current_dir().into_diagnostic()?;
     let manifest_path = cwd.join("Gust.toml");
 
@@ -298,10 +433,17 @@ pub async fn add(package: &str, git: Option<&str>, path: Option<&Path>, dev: boo
     }
 
     // Parse package@version if provided
-    let (name, version) = if let Some(idx) = package.find('@') {
+    let (pkg_spec, version) = if let Some(idx) = package.find('@') {
         (&package[..idx], Some(&package[idx + 1..]))
     } else {
         (package, None)
+    };
+
+    // Extract the actual package name (last component of org/repo)
+    let name = if pkg_spec.contains('/') {
+        pkg_spec.split('/').last().unwrap_or(pkg_spec)
+    } else {
+        pkg_spec
     };
 
     println!(
@@ -311,17 +453,49 @@ pub async fn add(package: &str, git: Option<&str>, path: Option<&Path>, dev: boo
         if dev { "(dev)" } else { "" }
     );
 
+    // Resolve the git URL
+    let resolved_git = if let Some(url) = git {
+        Some(url.to_string())
+    } else if path.is_none() {
+        // Try to auto-discover the URL
+        if let Some(url) = resolve_package_url(pkg_spec) {
+            println!(
+                "  {} Resolved to {}",
+                style("→").dim(),
+                style(&url).dim()
+            );
+            Some(url)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     // Read existing manifest
     let content = fs::read_to_string(&manifest_path).into_diagnostic()?;
 
     // Build the dependency line
-    let dep_line = if let Some(git_url) = git {
-        format!("{} = {{ git = \"{}\" }}", name, git_url)
+    let dep_line = if let Some(ref git_url) = resolved_git {
+        let mut parts = vec![format!("git = \"{}\"", git_url)];
+        if let Some(b) = branch {
+            parts.push(format!("branch = \"{}\"", b));
+        }
+        if let Some(t) = tag.or(version) {
+            parts.push(format!("tag = \"{}\"", t));
+        }
+        format!("{} = {{ {} }}", name, parts.join(", "))
     } else if let Some(p) = path {
         format!("{} = {{ path = \"{}\" }}", name, p.display())
     } else {
-        let ver = version.unwrap_or("*");
-        format!("{} = \"{}\"", name, ver)
+        // No git URL found and no path - error with helpful message
+        return Err(miette::miette!(
+            "Could not resolve package '{}'. Try one of:\n  \
+             gust add {} --git <url>\n  \
+             gust add apple/{}\n  \
+             gust add vapor/{}",
+            name, name, name, name
+        ));
     };
 
     // Find or create the dependencies section
@@ -445,9 +619,14 @@ pub async fn remove(package: &str) -> Result<()> {
 pub async fn install(frozen: bool) -> Result<()> {
     let cwd = env::current_dir().into_diagnostic()?;
 
+    // Scale concurrency with CPU cores (optimized for Apple Silicon Pro/Max chips)
+    let concurrency = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(8);
+
     let options = InstallOptions {
         frozen,
-        concurrency: 8,
+        concurrency,
     };
 
     let installer = Installer::new(cwd, options)?;
@@ -717,6 +896,444 @@ pub async fn info(package: &str) -> Result<()> {
                 style(format!("gust add {} --git <url>", package)).cyan()
             );
         }
+    }
+
+    Ok(())
+}
+
+/// Search for packages.
+pub async fn search(query: &str, limit: usize) -> Result<()> {
+    println!(
+        "{} Searching for '{}'...",
+        style("→").blue().bold(),
+        style(query).cyan()
+    );
+
+    // Search in known packages first
+    let query_lower = query.to_lowercase();
+    let matches: Vec<(&str, &str)> = KNOWN_ORGS
+        .iter()
+        .filter(|(name, _)| name.to_lowercase().contains(&query_lower))
+        .map(|(name, org)| (*name, *org))
+        .collect();
+
+    if matches.is_empty() {
+        println!(
+            "\n{} No packages found matching '{}'",
+            style("!").yellow(),
+            query
+        );
+        println!("\n{}", style("Try:").bold());
+        println!("  gust add <org>/<repo>           # Add from GitHub");
+        println!("  gust add <name> --git <url>     # Add with explicit URL");
+        return Ok(());
+    }
+
+    println!(
+        "\n{} Found {} matching packages:\n",
+        style("✓").green(),
+        matches.len().min(limit)
+    );
+
+    for (name, org) in matches.iter().take(limit) {
+        println!(
+            "  {} {}/{}",
+            style("•").dim(),
+            style(org).dim(),
+            style(name).cyan().bold()
+        );
+        println!(
+            "    {}",
+            style(format!("gust add {}/{}", org, name)).dim()
+        );
+    }
+
+    if matches.len() > limit {
+        println!(
+            "\n  {} ... and {} more (use --limit to see more)",
+            style("").dim(),
+            matches.len() - limit
+        );
+    }
+
+    Ok(())
+}
+
+/// List installed Swift versions.
+pub async fn swift_list() -> Result<()> {
+    println!("{}", style("Installed Swift versions:").bold());
+
+    // Check Xcode toolchains
+    let toolchain_dir = dirs::home_dir()
+        .map(|h| h.join("Library/Developer/Toolchains"));
+
+    if let Some(dir) = toolchain_dir {
+        if dir.exists() {
+            if let Ok(entries) = fs::read_dir(&dir) {
+                for entry in entries.flatten() {
+                    if let Some(name) = entry.file_name().to_str() {
+                        if name.ends_with(".xctoolchain") {
+                            let version = name.trim_end_matches(".xctoolchain");
+                            println!("  {} {}", style("•").dim(), version);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Check swiftenv
+    let swiftenv_dir = dirs::home_dir()
+        .map(|h| h.join(".swiftenv/versions"));
+
+    if let Some(dir) = swiftenv_dir {
+        if dir.exists() {
+            if let Ok(entries) = fs::read_dir(&dir) {
+                for entry in entries.flatten() {
+                    if let Some(name) = entry.file_name().to_str() {
+                        println!("  {} {} (swiftenv)", style("•").dim(), name);
+                    }
+                }
+            }
+        }
+    }
+
+    // Show current
+    swift_current().await?;
+
+    Ok(())
+}
+
+/// Show current Swift version.
+pub async fn swift_current() -> Result<()> {
+    let output = Command::new("swift")
+        .arg("--version")
+        .output()
+        .into_diagnostic()?;
+
+    if output.status.success() {
+        let version = String::from_utf8_lossy(&output.stdout);
+        let first_line = version.lines().next().unwrap_or("unknown");
+        println!(
+            "\n{} {}",
+            style("Current:").bold(),
+            style(first_line).cyan()
+        );
+    } else {
+        println!(
+            "{} Swift not found in PATH",
+            style("!").yellow().bold()
+        );
+    }
+
+    Ok(())
+}
+
+/// Install a Swift version.
+pub async fn swift_install(version: &str) -> Result<()> {
+    println!(
+        "{} Installing Swift {}...",
+        style("→").blue().bold(),
+        style(version).cyan()
+    );
+
+    // Check if swiftenv is available
+    if Command::new("swiftenv").arg("--version").output().is_ok() {
+        let status = Command::new("swiftenv")
+            .args(["install", version])
+            .status()
+            .into_diagnostic()?;
+
+        if status.success() {
+            println!(
+                "{} Installed Swift {}",
+                style("✓").green().bold(),
+                version
+            );
+        } else {
+            return Err(miette::miette!("Failed to install Swift {}", version));
+        }
+    } else {
+        println!("{}", style("Swift version management options:").bold());
+        println!();
+        println!("  {} Install swiftenv:", style("1.").cyan());
+        println!("     brew install kylef/formulae/swiftenv");
+        println!();
+        println!("  {} Download from swift.org:", style("2.").cyan());
+        println!("     https://swift.org/download/");
+        println!();
+        println!("  {} Use Xcode (macOS):", style("3.").cyan());
+        println!("     xcode-select --install");
+    }
+
+    Ok(())
+}
+
+/// Use a specific Swift version.
+pub async fn swift_use(version: &str, global: bool) -> Result<()> {
+    // Check if swiftenv is available
+    if Command::new("swiftenv").arg("--version").output().is_ok() {
+        let args = if global {
+            vec!["global", version]
+        } else {
+            vec!["local", version]
+        };
+
+        let status = Command::new("swiftenv")
+            .args(&args)
+            .status()
+            .into_diagnostic()?;
+
+        if status.success() {
+            println!(
+                "{} Now using Swift {} {}",
+                style("✓").green().bold(),
+                style(version).cyan(),
+                if global { "(global)" } else { "(local)" }
+            );
+        } else {
+            return Err(miette::miette!("Failed to set Swift version"));
+        }
+    } else {
+        println!(
+            "{} swiftenv not found. Install with:",
+            style("!").yellow().bold()
+        );
+        println!("  brew install kylef/formulae/swiftenv");
+    }
+
+    Ok(())
+}
+
+/// Generate Xcode project.
+pub async fn xcode_generate(open: bool) -> Result<()> {
+    let cwd = env::current_dir().into_diagnostic()?;
+    let (manifest, manifest_type) = find_manifest(&cwd).into_diagnostic()?;
+
+    println!(
+        "{} Generating Xcode project for {}",
+        style("→").blue().bold(),
+        style(&manifest.package.name).cyan()
+    );
+
+    // Use swift package generate-xcodeproj
+    let status = Command::new("swift")
+        .args(["package", "generate-xcodeproj"])
+        .current_dir(&cwd)
+        .status()
+        .into_diagnostic()?;
+
+    if !status.success() {
+        // If no Package.swift exists, create a temporary one
+        if manifest_type == gust_manifest::ManifestType::GustToml {
+            println!(
+                "  {} Creating temporary Package.swift",
+                style("→").dim()
+            );
+
+            let package_swift = generate_package_swift(&manifest);
+            let package_path = cwd.join("Package.swift");
+            fs::write(&package_path, &package_swift).into_diagnostic()?;
+
+            let status = Command::new("swift")
+                .args(["package", "generate-xcodeproj"])
+                .current_dir(&cwd)
+                .status()
+                .into_diagnostic()?;
+
+            // Clean up temporary Package.swift
+            let _ = fs::remove_file(&package_path);
+
+            if !status.success() {
+                return Err(miette::miette!("Failed to generate Xcode project"));
+            }
+        } else {
+            return Err(miette::miette!("Failed to generate Xcode project"));
+        }
+    }
+
+    let xcodeproj = cwd.join(format!("{}.xcodeproj", manifest.package.name));
+
+    println!(
+        "{} Created {}",
+        style("✓").green().bold(),
+        xcodeproj.display()
+    );
+
+    if open {
+        println!("{} Opening in Xcode...", style("→").blue());
+        Command::new("open")
+            .arg(&xcodeproj)
+            .status()
+            .into_diagnostic()?;
+    }
+
+    Ok(())
+}
+
+/// Generate a Package.swift from a Manifest.
+fn generate_package_swift(manifest: &Manifest) -> String {
+    let mut out = String::new();
+
+    out.push_str(&format!(
+        "// swift-tools-version:{}\n",
+        manifest.package.swift_tools_version
+    ));
+    out.push_str("import PackageDescription\n\n");
+    out.push_str("let package = Package(\n");
+    out.push_str(&format!("    name: \"{}\",\n", manifest.package.name));
+
+    // Dependencies
+    if !manifest.dependencies.is_empty() {
+        out.push_str("    dependencies: [\n");
+        for (_, dep) in &manifest.dependencies {
+            if let Some(git) = &dep.git {
+                if let Some(tag) = &dep.tag {
+                    out.push_str(&format!(
+                        "        .package(url: \"{}\", from: \"{}\"),\n",
+                        git, tag
+                    ));
+                } else if let Some(branch) = &dep.branch {
+                    out.push_str(&format!(
+                        "        .package(url: \"{}\", branch: \"{}\"),\n",
+                        git, branch
+                    ));
+                } else {
+                    out.push_str(&format!(
+                        "        .package(url: \"{}\", branch: \"main\"),\n",
+                        git
+                    ));
+                }
+            }
+        }
+        out.push_str("    ],\n");
+    }
+
+    // Targets
+    out.push_str("    targets: [\n");
+    for target in &manifest.targets {
+        match target.target_type {
+            TargetType::Executable => {
+                out.push_str(&format!(
+                    "        .executableTarget(name: \"{}\"),\n",
+                    target.name
+                ));
+            }
+            TargetType::Library => {
+                out.push_str(&format!(
+                    "        .target(name: \"{}\"),\n",
+                    target.name
+                ));
+            }
+            TargetType::Test => {
+                out.push_str(&format!(
+                    "        .testTarget(name: \"{}\"),\n",
+                    target.name
+                ));
+            }
+            _ => {}
+        }
+    }
+    out.push_str("    ]\n");
+    out.push_str(")\n");
+
+    out
+}
+
+/// Check environment and diagnose issues.
+pub async fn doctor() -> Result<()> {
+    println!("{}", style("Gust Doctor").bold().underlined());
+    println!();
+
+    let mut issues = 0;
+
+    // Check Swift
+    print!("{} Swift... ", style("Checking").dim());
+    match Command::new("swift").arg("--version").output() {
+        Ok(output) if output.status.success() => {
+            let version = String::from_utf8_lossy(&output.stdout);
+            let first_line = version.lines().next().unwrap_or("unknown");
+            println!("{} {}", style("✓").green(), first_line);
+        }
+        _ => {
+            println!("{} not found", style("✗").red());
+            issues += 1;
+        }
+    }
+
+    // Check git
+    print!("{} Git... ", style("Checking").dim());
+    match Command::new("git").arg("--version").output() {
+        Ok(output) if output.status.success() => {
+            let version = String::from_utf8_lossy(&output.stdout);
+            println!("{} {}", style("✓").green(), version.trim());
+        }
+        _ => {
+            println!("{} not found", style("✗").red());
+            issues += 1;
+        }
+    }
+
+    // Check Xcode (macOS)
+    #[cfg(target_os = "macos")]
+    {
+        print!("{} Xcode... ", style("Checking").dim());
+        match Command::new("xcode-select").arg("-p").output() {
+            Ok(output) if output.status.success() => {
+                let path = String::from_utf8_lossy(&output.stdout);
+                println!("{} {}", style("✓").green(), path.trim());
+            }
+            _ => {
+                println!("{} not found (run: xcode-select --install)", style("✗").red());
+                issues += 1;
+            }
+        }
+    }
+
+    // Check cache directories
+    print!("{} Cache directories... ", style("Checking").dim());
+    match GlobalCache::open() {
+        Ok(cache) => {
+            let git_dir = cache.git_dir();
+            let binary_dir = cache.binary_cache_dir();
+            println!("{}", style("✓").green());
+            println!("    Git cache: {}", git_dir.display());
+            println!("    Binary cache: {}", binary_dir.display());
+        }
+        Err(e) => {
+            println!("{} {}", style("✗").red(), e);
+            issues += 1;
+        }
+    }
+
+    // Check current project
+    print!("{} Current project... ", style("Checking").dim());
+    let cwd = env::current_dir().into_diagnostic()?;
+    if cwd.join("Gust.toml").exists() {
+        let (manifest, _) = find_manifest(&cwd).into_diagnostic()?;
+        println!("{} {} v{}", style("✓").green(), manifest.package.name, manifest.package.version);
+    } else if cwd.join("Package.swift").exists() {
+        println!(
+            "{} Package.swift found (run {} to convert)",
+            style("→").yellow(),
+            style("gust migrate").cyan()
+        );
+    } else {
+        println!("{} no package found", style("→").dim());
+    }
+
+    println!();
+    if issues == 0 {
+        println!(
+            "{} All checks passed!",
+            style("✓").green().bold()
+        );
+    } else {
+        println!(
+            "{} {} issue(s) found",
+            style("!").yellow().bold(),
+            issues
+        );
     }
 
     Ok(())

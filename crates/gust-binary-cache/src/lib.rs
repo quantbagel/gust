@@ -183,8 +183,8 @@ impl BinaryCacheClient {
             builder.finish()?;
         }
 
-        // Compress with zstd
-        let compressed = zstd::encode_all(tar_data.as_slice(), 3)
+        // Compress with zstd level 1 (fast compression, ARM decompresses quickly regardless)
+        let compressed = zstd::encode_all(tar_data.as_slice(), 1)
             .map_err(|e| BinaryCacheError::DecompressionError(e.to_string()))?;
 
         // Upload
@@ -298,8 +298,9 @@ impl LocalBinaryCache {
             builder.finish()?;
         }
 
-        // Use zstd level 3 for good balance of speed and compression
-        let compressed = zstd::encode_all(tar_data.as_slice(), 3)
+        // Use zstd level 1 for faster compression on Apple Silicon
+        // ARM CPUs decompress fast regardless of level, so optimize for write speed
+        let compressed = zstd::encode_all(tar_data.as_slice(), 1)
             .map_err(|e| BinaryCacheError::DecompressionError(e.to_string()))?;
 
         fs::write(&dest, &compressed)?;
@@ -375,14 +376,14 @@ impl CacheStats {
 }
 
 /// Hash all Swift source files in a directory.
+/// Uses rayon for parallel file hashing - optimized for Apple Silicon's many cores.
 pub fn hash_sources(dir: &Path) -> Result<String, BinaryCacheError> {
-    let mut file_hashes: BTreeMap<String, String> = BTreeMap::new();
+    use rayon::prelude::*;
 
-    fn visit_dir(
-        dir: &Path,
-        base: &Path,
-        hashes: &mut BTreeMap<String, String>,
-    ) -> Result<(), BinaryCacheError> {
+    // First, collect all source file paths (single-threaded, fast)
+    let mut source_files: Vec<PathBuf> = Vec::new();
+
+    fn collect_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), BinaryCacheError> {
         if !dir.is_dir() {
             return Ok(());
         }
@@ -398,22 +399,45 @@ pub fn hash_sources(dir: &Path) -> Result<String, BinaryCacheError> {
             }
 
             if path.is_dir() {
-                visit_dir(&path, base, hashes)?;
+                collect_files(&path, files)?;
             } else {
                 // Only hash Swift source files and important config
                 let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
                 if matches!(ext, "swift" | "h" | "c" | "cpp" | "m" | "mm") {
-                    let content = fs::read(&path)?;
-                    let hash = blake3::hash(&content).to_hex().to_string();
-                    let rel_path = path.strip_prefix(base).unwrap_or(&path);
-                    hashes.insert(rel_path.to_string_lossy().to_string(), hash);
+                    files.push(path);
                 }
             }
         }
         Ok(())
     }
 
-    visit_dir(dir, dir, &mut file_hashes)?;
+    collect_files(dir, &mut source_files)?;
+
+    // Parallel hash all files using rayon + mmap (Apple Silicon optimization)
+    // mmap provides zero-copy reads directly from the kernel page cache
+    let file_hashes: Result<BTreeMap<String, String>, BinaryCacheError> = source_files
+        .par_iter()
+        .map(|path| {
+            let file = fs::File::open(path)?;
+            let metadata = file.metadata()?;
+
+            // Use mmap for files > 4KB, regular read for small files
+            // (mmap overhead not worth it for tiny files)
+            let hash = if metadata.len() > 4096 {
+                // SAFETY: We only read the file, and it's not modified during hashing
+                let mmap = unsafe { memmap2::Mmap::map(&file)? };
+                blake3::hash(&mmap).to_hex().to_string()
+            } else {
+                let content = fs::read(path)?;
+                blake3::hash(&content).to_hex().to_string()
+            };
+
+            let rel_path = path.strip_prefix(dir).unwrap_or(path);
+            Ok((rel_path.to_string_lossy().to_string(), hash))
+        })
+        .collect();
+
+    let file_hashes = file_hashes?;
 
     // Combine all hashes deterministically
     let mut hasher = Hasher::new();

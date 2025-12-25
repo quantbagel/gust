@@ -40,8 +40,8 @@ toml = "0.8"
 # Dependency resolution
 pubgrub = "0.2"
 
-# Hashing
-blake3 = "1.5"
+# Hashing - with rayon for parallel hashing of large files, NEON SIMD on Apple Silicon
+blake3 = { version = "1.5", features = ["rayon"] }
 
 # Error handling
 miette = { version = "7.0", features = ["fancy"] }
@@ -49,11 +49,12 @@ thiserror = "1.0"
 
 # Filesystem
 walkdir = "2.4"
+memmap2 = "0.9"
 ignore = "0.4"
 fs4 = "0.7"
 
 # Git
-gix = { version = "0.58", default-features = false, features = ["blocking-network-client"] }
+gix = { version = "0.58", default-features = false, features = ["blocking-network-client", "worktree-mutation"] }
 
 # Archive/compression
 tar = "0.4"
